@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Chameleon — A local hide-and-seek painting game. Paint your character to blend into the environment, then challenge your friend to find you!">
+  <title>🦎 Chameleon — Hide &amp; Seek</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/styles.css">
+
+  <!-- Three.js Import Map -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- ═══════════════ 3D GAME CONTAINER ═══════════════ -->
+  <div id="game-container"></div>
+
+  <!-- ═══════════════ LOADING SCREEN ═══════════════ -->
+  <div id="loading-screen" class="screen active">
+    <div class="loading-content">
+      <div class="loading-chameleon">🦎</div>
+      <div class="loading-spinner"></div>
+      <p class="loading-text">Loading Chameleon...</p>
+    </div>
+  </div>
+
+  <!-- ═══════════════ MAIN MENU ═══════════════ -->
+  <div id="menu-screen" class="screen">
+    <div class="menu-backdrop"></div>
+    <div class="menu-content">
+      <!-- Title -->
+      <div class="menu-title-section">
+        <div class="title-chameleon">🦎</div>
+        <h1 class="game-title">CHAMELEON</h1>
+        <p class="game-subtitle">HIDE &amp; SEEK</p>
+        <p class="game-tagline">Paint. Hide. Seek. Discover.</p>
+      </div>
+
+      <!-- Map Selection -->
+      <div class="map-selection">
+        <h2 class="section-title">SELECT MAP</h2>
+        <div class="map-grid" id="map-grid">
+          <!-- Maps injected by JS -->
+        </div>
+      </div>
+
+      <!-- Settings Bar -->
+      <div class="settings-bar">
+        <div class="setting-item">
+          <label for="timer-select">⏱️ Timer</label>
+          <select id="timer-select">
+            <option value="30">30 sec</option>
+            <option value="60" selected>60 sec</option>
+            <option value="90">90 sec</option>
+            <option value="120">2 min</option>
+            <option value="180">3 min</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <label for="guesses-select">🎯 Max Guesses</label>
+          <select id="guesses-select">
+            <option value="3">3 guesses</option>
+            <option value="5" selected>5 guesses</option>
+            <option value="10">10 guesses</option>
+            <option value="0">Unlimited</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <label for="sound-toggle">🔊 Sound</label>
+          <button id="sound-toggle" class="toggle-btn active" data-active="true">ON</button>
+        </div>
+      </div>
+
+      <!-- Start Button -->
+      <button id="start-btn" class="primary-btn" disabled>
+        <span class="btn-icon">▶</span>
+        <span class="btn-text">START GAME</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ HIDER INSTRUCTIONS ═══════════════ -->
+  <div id="hider-intro-screen" class="screen">
+    <div class="intro-content glass-panel">
+      <div class="intro-icon">🎨</div>
+      <h2>YOU ARE THE HIDER</h2>
+      <div class="intro-steps">
+        <div class="intro-step"><span class="step-num">1</span> Move with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to find a hiding spot</div>
+        <div class="intro-step"><span class="step-num">2</span> Press <kbd>E</kbd> to lock position &amp; start painting</div>
+        <div class="intro-step"><span class="step-num">3</span> Paint yourself to blend into the surroundings</div>
+        <div class="intro-step"><span class="step-num">4</span> Choose a pose &amp; click <strong>DONE HIDING</strong></div>
+      </div>
+      <button id="hider-ready-btn" class="primary-btn">
+        <span class="btn-text">I'M READY</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ GAME HUD ═══════════════ -->
+  <div id="game-hud" class="hud hidden">
+    <!-- Phase indicator -->
+    <div id="phase-indicator" class="phase-badge">
+      <span class="phase-icon">🎨</span>
+      <span class="phase-text">HIDING PHASE</span>
+    </div>
+
+    <!-- Timer display -->
+    <div id="timer-display" class="timer-widget hidden">
+      <svg class="timer-ring" viewBox="0 0 120 120">
+        <circle class="timer-ring-bg" cx="60" cy="60" r="54" />
+        <circle class="timer-ring-progress" id="timer-ring-progress" cx="60" cy="60" r="54" />
+      </svg>
+      <div class="timer-text" id="timer-text">60</div>
+    </div>
+
+    <!-- Guess counter (seeker phase) -->
+    <div id="guess-counter" class="guess-widget hidden">
+      <span class="guess-label">GUESSES</span>
+      <div class="guess-dots" id="guess-dots"></div>
+    </div>
+
+    <!-- Controls hint -->
+    <div id="controls-hint" class="controls-hint">
+      <span>WASD: Move</span>
+      <span>Mouse: Look</span>
+      <span>E: Lock Position</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════ PAINT TOOLBAR ═══════════════ -->
+  <div id="paint-toolbar" class="toolbar hidden">
+    <div class="toolbar-header">
+      <span class="toolbar-title">🎨 PAINT</span>
+    </div>
+
+    <!-- Tools -->
+    <div class="toolbar-section">
+      <div class="tool-group">
+        <button class="tool-btn active" data-tool="brush" id="tool-brush" title="Brush (B)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+        </button>
+        <button class="tool-btn" data-tool="eyedropper" id="tool-eyedropper" title="Eyedropper (I)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 22l1-1h3l9-9"/><path d="M3 21l9-9"/><circle cx="17" cy="7" r="4"/></svg>
+        </button>
+        <button class="tool-btn" data-tool="fill" id="tool-fill" title="Fill (G)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 22l14-14L19 11l-14 14"/><path d="M16 8L19 5l3 3"/><path d="M19 15c1 2 3 3 3 5a3 3 0 01-6 0c0-2 2-3 3-5z"/></svg>
+        </button>
+        <button class="tool-btn" data-tool="eraser" id="tool-eraser" title="Eraser (X)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16l10-10 8 8-4 4"/><path d="M6 11l8 8"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Color -->
+    <div class="toolbar-section">
+      <label class="toolbar-label">COLOR</label>
+      <div class="color-picker-row">
+        <div class="color-preview" id="color-preview"></div>
+        <input type="color" id="color-input" value="#ffffff">
+      </div>
+      <!-- Quick colors -->
+      <div class="quick-colors" id="quick-colors">
+        <button class="quick-color" data-color="#ffffff" style="background:#ffffff"></button>
+        <button class="quick-color" data-color="#000000" style="background:#000000"></button>
+        <button class="quick-color" data-color="#ff3333" style="background:#ff3333"></button>
+        <button class="quick-color" data-color="#33ff33" style="background:#33ff33"></button>
+        <button class="quick-color" data-color="#3366ff" style="background:#3366ff"></button>
+        <button class="quick-color" data-color="#ffff33" style="background:#ffff33"></button>
+        <button class="quick-color" data-color="#ff9933" style="background:#ff9933"></button>
+        <button class="quick-color" data-color="#9933ff" style="background:#9933ff"></button>
+        <button class="quick-color" data-color="#8B7355" style="background:#8B7355"></button>
+        <button class="quick-color" data-color="#556B2F" style="background:#556B2F"></button>
+        <button class="quick-color" data-color="#808080" style="background:#808080"></button>
+        <button class="quick-color" data-color="#C0C0C0" style="background:#C0C0C0"></button>
+      </div>
+    </div>
+
+    <!-- Brush size -->
+    <div class="toolbar-section">
+      <label class="toolbar-label">SIZE: <span id="brush-size-val">12</span></label>
+      <input type="range" id="brush-size" class="custom-slider" min="2" max="60" value="12">
+    </div>
+
+    <!-- Opacity -->
+    <div class="toolbar-section">
+      <label class="toolbar-label">OPACITY: <span id="opacity-val">100%</span></label>
+      <input type="range" id="brush-opacity" class="custom-slider" min="10" max="100" value="100">
+    </div>
+
+    <!-- Actions -->
+    <div class="toolbar-section toolbar-actions">
+      <button class="action-btn" id="undo-btn" title="Undo (Ctrl+Z)">↩ Undo</button>
+      <button class="action-btn" id="redo-btn" title="Redo (Ctrl+Y)">↪ Redo</button>
+      <button class="action-btn danger" id="clear-btn" title="Clear All">🗑 Clear</button>
+    </div>
+
+    <!-- Texture Preview -->
+    <div class="toolbar-section">
+      <label class="toolbar-label">PREVIEW</label>
+      <canvas id="texture-preview" class="texture-preview" width="128" height="128"></canvas>
+    </div>
+
+    <!-- Done button -->
+    <button id="done-hiding-btn" class="primary-btn done-btn">
+      <span class="btn-icon">✅</span>
+      <span class="btn-text">DONE HIDING</span>
+    </button>
+  </div>
+
+  <!-- ═══════════════ POSE SELECTOR ═══════════════ -->
+  <div id="pose-selector" class="pose-bar hidden">
+    <span class="pose-label">POSE:</span>
+    <div class="pose-options" id="pose-options">
+      <!-- Poses injected by JS -->
+    </div>
+  </div>
+
+  <!-- ═══════════════ HANDOFF SCREEN ═══════════════ -->
+  <div id="handoff-screen" class="screen">
+    <div class="handoff-content">
+      <div class="handoff-blur-layer"></div>
+      <div class="handoff-card glass-panel">
+        <div class="handoff-icon">🔍</div>
+        <h2 class="handoff-title">PASS TO SEEKER</h2>
+        <p class="handoff-subtitle">The hider has hidden! Don't let them peek!</p>
+        <div class="handoff-divider"></div>
+        <p class="handoff-instructions">When the seeker is ready, click below to start hunting.</p>
+        <button id="seeker-ready-btn" class="primary-btn pulse-btn">
+          <span class="btn-text">START SEEKING</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ SEEKER COUNTDOWN ═══════════════ -->
+  <div id="seeker-countdown" class="screen">
+    <div class="countdown-number" id="countdown-number">3</div>
+  </div>
+
+  <!-- ═══════════════ RESULT SCREEN ═══════════════ -->
+  <div id="result-screen" class="screen">
+    <div class="result-content">
+      <div class="result-card glass-panel">
+        <div class="result-icon" id="result-icon">🎉</div>
+        <h2 class="result-title" id="result-title">SEEKER WINS!</h2>
+        <p class="result-subtitle" id="result-subtitle">Found in 23 seconds with 2 guesses</p>
+
+        <div class="result-stats" id="result-stats">
+          <div class="stat-item">
+            <span class="stat-value" id="stat-time">23s</span>
+            <span class="stat-label">Time</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value" id="stat-guesses">2</span>
+            <span class="stat-label">Guesses</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value" id="stat-map">Garden</span>
+            <span class="stat-label">Map</span>
+          </div>
+        </div>
+
+        <!-- Show where character was hiding -->
+        <button id="reveal-btn" class="secondary-btn">👁 REVEAL HIDING SPOT</button>
+
+        <div class="result-actions">
+          <button id="play-again-btn" class="primary-btn">
+            <span class="btn-icon">🔄</span>
+            <span class="btn-text">PLAY AGAIN</span>
+          </button>
+          <button id="menu-btn" class="secondary-btn">🏠 MAIN MENU</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ NOTIFICATION CONTAINER ═══════════════ -->
+  <div id="notification-container"></div>
+
+  <!-- ═══════════════ CROSSHAIR (Seeker) ═══════════════ -->
+  <div id="crosshair" class="crosshair hidden">
+    <div class="crosshair-h"></div>
+    <div class="crosshair-v"></div>
+    <div class="crosshair-dot"></div>
+  </div>
+
+  <!-- ═══════════════ CLICK FEEDBACK ═══════════════ -->
+  <div id="click-feedback" class="click-feedback hidden"></div>
+
+  <!-- Hidden paint canvas -->
+  <canvas id="paint-canvas" width="512" height="512" style="display:none"></canvas>
+
+  <!-- Main Script -->
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
