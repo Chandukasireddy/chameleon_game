@@ -68,6 +68,10 @@ export class GameRenderer {
     // Solid colliders (axis-aligned boxes) — walls & props
     this.colliders = [];
 
+    // Third-person hunter state
+    this.playerPosition = new THREE.Vector3();
+    this._hunterMoving = false;
+
     // ─── Animation ───
     this.animationId = null;
     this.onRenderCallback = null;
@@ -129,6 +133,35 @@ export class GameRenderer {
     this._updateFPSCamera();
   }
 
+  /**
+   * Third-person hunter controls: mouse aims (pointer lock), WASD walks the
+   * body around with wall-sliding collision, camera trails over the shoulder.
+   */
+  enableThirdPersonControls(startPos = new THREE.Vector3(0, 0, 0), startYaw = 0) {
+    this.disableControls();
+    this.controlMode = 'hunter';
+    this.playerPosition.set(startPos.x, 0, startPos.z);
+    this.fpsState.yaw = startYaw;
+    this.fpsState.pitch = -0.12;
+    this._hunterMoving = false;
+
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener('click', this._onRequestLock = () => {
+      if (!this.fpsState.isLocked) canvas.requestPointerLock();
+    });
+    document.addEventListener('pointerlockchange', this._onLockChange = () => {
+      this.fpsState.isLocked = document.pointerLockElement === canvas;
+    });
+    document.addEventListener('mousemove', this._onMouseMove);
+    document.addEventListener('keydown', this._onKeyDown);
+    document.addEventListener('keyup', this._onKeyUp);
+
+    this._updateThirdPersonCamera();
+  }
+
+  isHunterMoving() { return this._hunterMoving; }
+  getHunterYaw() { return this.fpsState.yaw; }
+
   disableControls() {
     this.controlMode = 'none';
     const canvas = this.renderer.domElement;
@@ -140,6 +173,8 @@ export class GameRenderer {
     document.removeEventListener('mousemove', this._onMouseMove);
     document.removeEventListener('keydown', this._onKeyDown);
     document.removeEventListener('keyup', this._onKeyUp);
+    if (this._onRequestLock) { canvas.removeEventListener('click', this._onRequestLock); this._onRequestLock = null; }
+    if (this._onLockChange) { document.removeEventListener('pointerlockchange', this._onLockChange); this._onLockChange = null; }
 
     if (document.pointerLockElement) {
       document.exitPointerLock();
@@ -217,9 +252,11 @@ export class GameRenderer {
       this.animationId = requestAnimationFrame(animate);
       const delta = this.clock.getDelta();
 
-      // Update FPS movement
+      // Update movement for the active control mode
       if (this.controlMode === 'fps') {
         this._updateFPSMovement(delta);
+      } else if (this.controlMode === 'hunter') {
+        this._updateThirdPersonMovement(delta);
       }
 
       if (this.onRenderCallback) {
@@ -386,6 +423,13 @@ export class GameRenderer {
       this.fpsState.pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, this.fpsState.pitch));
       this._updateFPSCamera();
     }
+
+    if (this.controlMode === 'hunter' && this.fpsState.isLocked) {
+      this.fpsState.yaw -= e.movementX * this.fpsState.lookSpeed;
+      this.fpsState.pitch -= e.movementY * this.fpsState.lookSpeed;
+      this.fpsState.pitch = Math.max(-0.9, Math.min(0.55, this.fpsState.pitch));
+      this._updateThirdPersonCamera();
+    }
   }
 
   _handleMouseUp(e) {
@@ -402,7 +446,7 @@ export class GameRenderer {
   }
 
   _handleKeyDown(e) {
-    if (this.controlMode === 'fps') {
+    if (this.controlMode === 'fps' || this.controlMode === 'hunter') {
       switch (e.code) {
         case 'KeyW': case 'ArrowUp':    this.fpsState.moveForward  = true; break;
         case 'KeyS': case 'ArrowDown':  this.fpsState.moveBackward = true; break;
@@ -413,7 +457,7 @@ export class GameRenderer {
   }
 
   _handleKeyUp(e) {
-    if (this.controlMode === 'fps') {
+    if (this.controlMode === 'fps' || this.controlMode === 'hunter') {
       switch (e.code) {
         case 'KeyW': case 'ArrowUp':    this.fpsState.moveForward  = false; break;
         case 'KeyS': case 'ArrowDown':  this.fpsState.moveBackward = false; break;
@@ -421,6 +465,56 @@ export class GameRenderer {
         case 'KeyD': case 'ArrowRight': this.fpsState.moveRight    = false; break;
       }
     }
+  }
+
+  // ═══════════════ THIRD-PERSON (HUNTER) CAMERA & MOVEMENT ═══════════════
+
+  _updateThirdPersonMovement(delta) {
+    const s = this.fpsState;
+    const speed = s.moveSpeed * 0.8 * delta;
+
+    // Horizontal forward/right derived from yaw only (so aiming up/down
+    // doesn't slow you down)
+    const forward = new THREE.Vector3(Math.sin(s.yaw), 0, Math.cos(s.yaw));
+    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+    const move = new THREE.Vector3();
+    if (s.moveForward) move.add(forward);
+    if (s.moveBackward) move.sub(forward);
+    if (s.moveRight) move.add(right);
+    if (s.moveLeft) move.sub(right);
+
+    this._hunterMoving = move.lengthSq() > 0;
+
+    if (this._hunterMoving) {
+      move.normalize().multiplyScalar(speed);
+      let newX = this.playerPosition.x + move.x;
+      let newZ = this.playerPosition.z + move.z;
+
+      if (this.bounds) {
+        newX = Math.max(this.bounds.minX + 0.5, Math.min(this.bounds.maxX - 0.5, newX));
+        newZ = Math.max(this.bounds.minZ + 0.5, Math.min(this.bounds.maxZ - 0.5, newZ));
+      }
+
+      const resolved = this.resolveMove(this.playerPosition.x, this.playerPosition.z, newX, newZ, 0.4);
+      this.playerPosition.x = resolved.x;
+      this.playerPosition.z = resolved.z;
+    }
+
+    this._updateThirdPersonCamera();
+  }
+
+  _updateThirdPersonCamera() {
+    const s = this.fpsState;
+    const dist = 4.2;
+    const pivot = new THREE.Vector3(this.playerPosition.x, 1.5, this.playerPosition.z);
+
+    this.camera.quaternion.setFromEuler(new THREE.Euler(s.pitch, s.yaw, 0, 'YXZ'));
+    const lookDir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+
+    // Place the camera behind the pivot, looking forward through it
+    this.camera.position.copy(pivot).addScaledVector(lookDir, -dist);
+    if (this.camera.position.y < 0.4) this.camera.position.y = 0.4;
   }
 
   // ═══════════════ CLEANUP ═══════════════

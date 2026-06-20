@@ -55,10 +55,16 @@ class ChameleonGame {
     this.camYaw = 0;                 // smoothed follow-camera yaw
     this.poseSelectorBuilt = false;
 
+    // Hunter (seeker) state
+    this.hunter = null;
+    this._effects = [];   // transient paint-shot visuals
+    this._paintColors = ['#ff3b6b', '#ffd23f', '#2ec4b6', '#4cc9f0', '#9b5de5', '#ff7b00', '#00f5d4', '#f15bb5'];
+    this._paintIndex = 0;
+
     // Bound handlers
     this._onHiderKeyDown = this._handleHiderKeyDown.bind(this);
     this._onHiderKeyUp = this._handleHiderKeyUp.bind(this);
-    this._onSeekerClick = this._handleSeekerClick.bind(this);
+    this._onHunterShoot = this._handleHunterShoot.bind(this);
 
     this._init();
   }
@@ -119,9 +125,16 @@ class ChameleonGame {
     if (this.character) this.character.reset();
     if (this.painter) { this.painter.destroy(); this.painter = null; }
     if (this.seeker) { this.seeker.destroy(); this.seeker = null; }
+    if (this.hunter) {
+      this.hunter.removeFromScene(this.renderer.scene);
+      this.hunter.destroy();
+      this.hunter = null;
+    }
+    this._clearEffects();
 
     // Disable hider controls
     this._disableHiderMovement();
+    document.removeEventListener('mousedown', this._onHunterShoot);
     this.hiderInitialized = false;
     this.poseSelectorBuilt = false;
 
@@ -144,6 +157,12 @@ class ChameleonGame {
     this.poseSelectorBuilt = false;
     if (this.painter) { this.painter.destroy(); this.painter = null; }
     if (this.seeker) { this.seeker.destroy(); this.seeker = null; }
+    if (this.hunter) {
+      this.hunter.removeFromScene(this.renderer.scene);
+      this.hunter.destroy();
+      this.hunter = null;
+    }
+    this._clearEffects();
 
     this.ui.hideAllScreens();
     this.ui.hidePoseSelector();
@@ -183,13 +202,8 @@ class ChameleonGame {
       this.hiderFacing = 0;
       this.camYaw = 0;
 
-      // Render loop: drive movement, walking & follow camera every frame
-      this.renderer.onRenderCallback = (delta) => {
-        if (this.state === STATE.HIDER_POSITION) {
-          this._updateHiderMovement(delta);
-        }
-        this.character.update(delta);
-      };
+      // Render loop dispatcher — persists across hider & seeker phases
+      this.renderer.onRenderCallback = (delta) => this._onFrame(delta);
       this.renderer.startLoop();
 
       // Audio
@@ -332,14 +346,18 @@ class ChameleonGame {
     this.renderer.setFog(mapInfo.fogColor, seekFog);
     this.renderer.setBackground(mapInfo.fogColor);
 
-    // Setup FPS controls starting from seeker spawn
-    this.renderer.enableFPSControls(
-      this.mapData.seekerSpawn,
-      Math.atan2(
-        this.character.getPosition().x - this.mapData.seekerSpawn.x,
-        this.character.getPosition().z - this.mapData.seekerSpawn.z
-      )
+    // Yaw facing roughly toward where the hider is
+    const spawn = this.mapData.seekerSpawn;
+    const startYaw = Math.atan2(
+      this.character.getPosition().x - spawn.x,
+      this.character.getPosition().z - spawn.z
     );
+
+    // ── Spawn the hunter: a walking figure carrying a paint gun ──
+    this._spawnHunter(spawn, startYaw);
+
+    // Third-person controls (mouse aims, WASD walks, camera over the shoulder)
+    this.renderer.enableThirdPersonControls(spawn, startYaw);
 
     // Create seeker
     const maxGuesses = this.ui.getMaxGuesses();
@@ -362,8 +380,8 @@ class ChameleonGame {
       this._onHiderWins('out_of_guesses');
     };
 
-    // Double-click to guess (single click only locks the pointer)
-    document.addEventListener('dblclick', this._onSeekerClick);
+    // Left-click fires the paint gun (the first click just grabs pointer lock)
+    document.addEventListener('mousedown', this._onHunterShoot);
 
     // Start timer
     const timerDuration = this.ui.getTimerDuration();
@@ -389,13 +407,28 @@ class ChameleonGame {
 
     // HUD
     this.ui.showHUD();
-    this.ui.setPhase('🔍', 'SEEKING');
-    this.ui.setControlsHint(['Click: Lock mouse', 'WASD/Arrows: Move', 'Double-Click: Guess']);
+    this.ui.setPhase('🔫', 'HUNTING');
+    this.ui.setControlsHint(['Click: Lock mouse', 'WASD: Move', 'Mouse: Aim', 'Left-Click: Shoot paint']);
     this.ui.showTimer();
     this.ui.showGuessCounter(maxGuesses);
     this.ui.showCrosshair();
 
-    this.ui.showNotification('Find the hidden player! Double-click to guess.', 'info');
+    this.ui.showNotification('Hunt the hidden player! Walk the map and shoot paint to tag them.', 'info');
+  }
+
+  /** Build & place the hunter figure with its paint gun */
+  _spawnHunter(spawn, yaw) {
+    if (this.hunter) { this.hunter.removeFromScene(this.renderer.scene); this.hunter.destroy(); }
+    this.hunter = new Character({ sharedCanvas: false });
+    this.hunter.setBodyColor('#2b2f3a');      // distinct dark hunter outfit
+    this.hunter.setPose('aim');
+    this.hunter.setArmSwing(false);           // keep the gun trained forward
+    this.hunter.attachGun(this._paintColors[0]);
+    // Tag every hunter mesh so shots & guesses never count the hunter itself
+    this.hunter.getGroup().traverse(o => { o.userData.isHunter = true; });
+    this.hunter.addToScene(this.renderer.scene);
+    this.hunter.setPosition(spawn.x, 0, spawn.z);
+    this.hunter.setRotation(yaw);
   }
 
   // ═══════════════ GAME END CONDITIONS ═══════════════
@@ -449,9 +482,15 @@ class ChameleonGame {
   }
 
   _cleanupSeeking() {
-    document.removeEventListener('dblclick', this._onSeekerClick);
+    document.removeEventListener('mousedown', this._onHunterShoot);
     if (this.seeker) this.seeker.disable();
     this.renderer.disableControls();
+    if (this.hunter) {
+      this.hunter.removeFromScene(this.renderer.scene);
+      this.hunter.destroy();
+      this.hunter = null;
+    }
+    this._clearEffects();
     this.ui.hideHUD();
     this.ui.hideCrosshair();
     this.audio.stopAmbient();
@@ -582,14 +621,146 @@ class ChameleonGame {
     return a + diff * t;
   }
 
-  // ═══════════════ SEEKER CLICK ═══════════════
+  // ═══════════════ PER-FRAME DISPATCH ═══════════════
 
-  _handleSeekerClick(event) {
-    if (this.state !== STATE.SEEKING) return;
-    if (this.seeker && document.pointerLockElement) {
-      this.seeker.processClick(event);
+  _onFrame(delta) {
+    if (this.state === STATE.HIDER_POSITION) {
+      this._updateHiderMovement(delta);
+    }
+    if (this.character) this.character.update(delta);
+
+    if (this.state === STATE.SEEKING && this.hunter) {
+      this._syncHunter();
+      this.hunter.update(delta);
+    }
+
+    if (this._effects.length) this._updateEffects(delta);
+  }
+
+  /** Match the hunter figure to the renderer's player position & aim yaw */
+  _syncHunter() {
+    const p = this.renderer.playerPosition;
+    this.hunter.setPosition(p.x, 0, p.z);
+    this.hunter.setRotation(this.renderer.getHunterYaw());
+    this.hunter.setWalking(this.renderer.isHunterMoving(), 1);
+  }
+
+  // ═══════════════ PAINT-GUN SHOOTING ═══════════════
+
+  _handleHunterShoot(event) {
+    if (this.state !== STATE.SEEKING || !this.seeker || this.seeker.found) return;
+    if (event.button !== 0) return;
+    // The first click only grabs the pointer lock; shots need the lock held
+    if (!document.pointerLockElement) return;
+
+    // Raycast from screen centre, ignoring the hunter's own body & gun
+    const targets = [];
+    this.renderer.scene.traverse(obj => {
+      if (obj.isMesh && !this._isHunterMesh(obj)) targets.push(obj);
+    });
+    const hits = this.renderer.raycastFromCenter(targets, false);
+
+    // Where the paint lands (a far point if we hit nothing)
+    const camDir = new THREE.Vector3();
+    this.renderer.camera.getWorldDirection(camDir);
+    const landing = hits.length
+      ? hits[0].point.clone()
+      : this.renderer.camera.position.clone().addScaledVector(camDir, 40);
+    const normal = hits.length && hits[0].face
+      ? hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld)
+      : camDir.clone().negate();
+
+    const color = this._paintColors[this._paintIndex++ % this._paintColors.length];
+    if (this.hunter) this.hunter.setGunColor(color);
+    this._spawnShotEffects(color, landing, normal);
+    this.audio.play('click');
+
+    // Did the paint strike the hider?
+    const isHit = hits.length > 0 && this._isCharacterHit(hits[0].object);
+    this.seeker.fire(isHit);
+  }
+
+  _isHunterMesh(mesh) {
+    let cur = mesh;
+    while (cur) {
+      if (cur.userData && cur.userData.isHunter) return true;
+      cur = cur.parent;
+    }
+    return false;
+  }
+
+  _isCharacterHit(mesh) {
+    let cur = mesh;
+    while (cur) {
+      if (cur.userData && cur.userData.isCharacter) return true;
+      cur = cur.parent;
+    }
+    return false;
+  }
+
+  /** Muzzle flash + tracer + a paint splat decal at the impact point */
+  _spawnShotEffects(color, landing, normal) {
+    const scene = this.renderer.scene;
+    const now = performance.now();
+
+    // Muzzle flash
+    const muzzle = this.hunter ? this.hunter.getMuzzleWorld() : this.renderer.camera.position.clone();
+    const flash = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 8, 8),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 })
+    );
+    flash.position.copy(muzzle);
+    scene.add(flash);
+    this._effects.push({ mesh: flash, born: now, ttl: 120, scale: true });
+
+    // Tracer streak from muzzle to landing point
+    const tracerGeom = new THREE.BufferGeometry().setFromPoints([muzzle, landing]);
+    const tracer = new THREE.Line(tracerGeom,
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.85 }));
+    scene.add(tracer);
+    this._effects.push({ mesh: tracer, born: now, ttl: 140 });
+
+    // Paint splat decal on the surface it hit
+    const splat = new THREE.Mesh(
+      new THREE.CircleGeometry(0.18 + Math.random() * 0.12, 14),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false })
+    );
+    splat.position.copy(landing).addScaledVector(normal, 0.02);
+    splat.lookAt(landing.clone().add(normal));
+    scene.add(splat);
+    this._effects.push({ mesh: splat, born: now, ttl: 2600, fade: true });
+  }
+
+  _updateEffects(delta) {
+    const now = performance.now();
+    for (let i = this._effects.length - 1; i >= 0; i--) {
+      const fx = this._effects[i];
+      const age = now - fx.born;
+      const k = age / fx.ttl;
+      if (k >= 1) {
+        this.renderer.scene.remove(fx.mesh);
+        fx.mesh.geometry?.dispose();
+        fx.mesh.material?.dispose();
+        this._effects.splice(i, 1);
+        continue;
+      }
+      if (fx.scale) fx.mesh.scale.setScalar(1 + k * 2);
+      if (fx.mesh.material && fx.mesh.material.opacity !== undefined) {
+        const base = fx.fade ? 0.95 : (fx.scale ? 0.95 : 0.85);
+        fx.mesh.material.opacity = fx.fade ? base * (1 - Math.max(0, k - 0.6) / 0.4) : base * (1 - k);
+      }
     }
   }
+
+  _clearEffects() {
+    this._effects.forEach(fx => {
+      this.renderer.scene.remove(fx.mesh);
+      fx.mesh.geometry?.dispose();
+      fx.mesh.material?.dispose();
+    });
+    this._effects = [];
+  }
+
 
   // ═══════════════ UI CALLBACKS ═══════════════
 

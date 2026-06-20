@@ -20,11 +20,11 @@ The game is designed for **two players on a single device** (laptop/PC).
 ### Phase 2: Handoff 🤝
 * The screen goes into a blurred, secure handoff state. The hider passes the device to the second player (Seeker) without revealing their hiding spot.
 
-### Phase 3: Seeker Phase 🔍
-1. **Countdown**: The seeker gets a 3-second countdown to prepare.
-2. **Seek**: The seeker looks around the 3D map using the mouse.
-3. **Find**: The seeker left-clicks to guess where the hider is hiding.
-4. **Constraints**: The seeker must find the hider before the timer runs out and within the maximum number of guesses configured on the main menu.
+### Phase 3: Hunter Phase 🔫
+1. **Countdown**: The hunter gets a 3-second countdown to prepare.
+2. **Hunt**: The hunter is a walking character armed with a **paint gun**. Move with `WASD` (legs animate), aim with the mouse — a third-person camera trails over the shoulder. The thick fog means you must walk the map to uncover hiding spots.
+3. **Shoot**: **Left-click** to fire a paint shot at the crosshair. Tag the hidden player with paint to find them — each shot counts as a guess and leaves a colourful splat where it lands.
+4. **Constraints**: The hunter must tag the hider before the timer runs out and within the maximum number of shots/guesses configured on the main menu.
 
 ---
 
@@ -69,12 +69,18 @@ If you use Visual Studio Code:
 
 | Control | Action |
 | :--- | :--- |
-| `W`, `A`, `S`, `D` | Move (Hider Phase) |
-| `Mouse movement` | Look / Rotate Camera (Both Phases) |
-| `E` | Lock position & Open Paint Toolbar (Hider Phase) |
-| `Left Click` | Paint (Paint Mode) / Guess Hider Location (Seeker Phase) |
+| `W`, `A`, `S`, `D` / Arrows | Walk (legs animate); a third-person camera trails the character |
+| Pose Bar | Pick a pose at any time — available from the start, not just after locking |
+| `L` | **Lock** position & open Paint Toolbar — press `L` again to **unlock** and reposition |
+| `Right-drag` / `Scroll` | Rotate / zoom while painting |
+| `Left Click` | Paint (Paint Mode) / **Shoot the paint gun** (Hunter Phase) |
+| Mouse | Aim the paint gun (Hunter Phase) |
 | `B` / `I` / `G` / `X` | Quick Paint Toolbar hotkeys (Brush / Eyedropper / Fill / Eraser) |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / Redo paint strokes |
+
+> **Walls are solid.** Both the hider and the seeker collide with walls and props — you slide along surfaces instead of passing through them.
+>
+> **No free map overview.** During the seek phase the fog thickens, so the seeker must physically walk the map to uncover hiding spots rather than scanning everything from the spawn.
 
 ---
 

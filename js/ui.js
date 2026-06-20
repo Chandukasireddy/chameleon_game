@@ -151,7 +151,8 @@ export class GameUI {
       const progress = remaining / total;
       const offset = this.timerCircumference * (1 - progress);
       this.timerRingProgress.style.strokeDashoffset = offset;
-      this.timerRingProgress.className = 'timer-ring-progress';
+      // NOTE: SVG elements have a read-only .className — must use setAttribute
+      this.timerRingProgress.setAttribute('class', 'timer-ring-progress');
       if (secs <= 5) this.timerRingProgress.classList.add('danger');
       else if (secs <= 10) this.timerRingProgress.classList.add('warning');
     }

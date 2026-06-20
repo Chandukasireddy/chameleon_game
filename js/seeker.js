@@ -42,6 +42,16 @@ export class SeekerMode {
     this._processRaycast(event, document.pointerLockElement != null);
   }
 
+  /**
+   * Register a paint-gun shot. The caller does the raycast (so it can exclude
+   * the hunter's own body) and tells us whether the hider was struck.
+   */
+  fire(isHit) {
+    if (!this.isActive || this.found) return;
+    if (isHit) this._registerHit(null);
+    else this._registerMiss(null);
+  }
+
   _processRaycast(event, fromCenter) {
     // Get all scene objects for raycasting
     const allObjects = [];
