@@ -98,7 +98,7 @@
       <div class="intro-icon">🎨</div>
       <h2>YOU ARE THE HIDER</h2>
       <div class="intro-steps">
-        <div class="intro-step"><span class="step-num">1</span> Move with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to find a hiding spot</div>
+        <div class="intro-step"><span class="step-num">1</span> Move with <kbd>WASD</kbd> or <kbd>Arrow Keys</kbd> to find a hiding spot</div>
         <div class="intro-step"><span class="step-num">2</span> Press <kbd>E</kbd> to lock position &amp; start painting</div>
         <div class="intro-step"><span class="step-num">3</span> Paint yourself to blend into the surroundings</div>
         <div class="intro-step"><span class="step-num">4</span> Choose a pose &amp; click <strong>DONE HIDING</strong></div>
@@ -190,8 +190,8 @@
 
     <!-- Brush size -->
     <div class="toolbar-section">
-      <label class="toolbar-label">SIZE: <span id="brush-size-val">12</span></label>
-      <input type="range" id="brush-size" class="custom-slider" min="2" max="60" value="12">
+      <label class="toolbar-label">SIZE: <span id="brush-size-val">18</span></label>
+      <input type="range" id="brush-size" class="custom-slider" min="2" max="60" value="18">
     </div>
 
     <!-- Opacity -->
@@ -289,6 +289,9 @@
 
   <!-- ═══════════════ NOTIFICATION CONTAINER ═══════════════ -->
   <div id="notification-container"></div>
+
+  <!-- ═══════════════ PAINT CURSOR ═══════════════ -->
+  <div id="paint-cursor" class="paint-cursor hidden"></div>
 
   <!-- ═══════════════ CROSSHAIR (Seeker) ═══════════════ -->
   <div id="crosshair" class="crosshair hidden">

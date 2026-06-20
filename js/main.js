@@ -47,7 +47,7 @@ class ChameleonGame {
     this.totalGuessesUsed = 0;
 
     // Hider movement state
-    this.hiderKeys = { w: false, a: false, s: false, d: false };
+    this.hiderKeys = { w: false, a: false, s: false, d: false, up: false, down: false, left: false, right: false };
     this.hiderRotation = 0;
     this.hiderLocked = false;
 
@@ -183,7 +183,7 @@ class ChameleonGame {
     // HUD
     this.ui.showHUD();
     this.ui.setPhase('🚶', 'FIND A SPOT');
-    this.ui.setControlsHint(['WASD: Move', 'Mouse: Look (right-click drag)', 'E: Lock Position & Paint']);
+    this.ui.setControlsHint(['WASD/Arrows: Move', 'Mouse: Look (right-click drag)', 'E: Lock Position & Paint']);
     this.ui.hidePaintUI();
     this.ui.hideTimer();
     this.ui.hideGuessCounter();
@@ -312,8 +312,8 @@ class ChameleonGame {
       this._onHiderWins('out_of_guesses');
     };
 
-    // Click handler for FPS mode (pointer lock captures clicks)
-    document.addEventListener('mousedown', this._onSeekerClick);
+    // Double-click to guess (single click only locks the pointer)
+    document.addEventListener('dblclick', this._onSeekerClick);
 
     // Start timer
     const timerDuration = this.ui.getTimerDuration();
@@ -340,12 +340,12 @@ class ChameleonGame {
     // HUD
     this.ui.showHUD();
     this.ui.setPhase('🔍', 'SEEKING');
-    this.ui.setControlsHint(['Click: Lock mouse', 'WASD: Move', 'Click: Guess location']);
+    this.ui.setControlsHint(['Click: Lock mouse', 'WASD/Arrows: Move', 'Double-Click: Guess']);
     this.ui.showTimer();
     this.ui.showGuessCounter(maxGuesses);
     this.ui.showCrosshair();
 
-    this.ui.showNotification('Find the hidden chameleon! Click to guess.', 'info');
+    this.ui.showNotification('Find the hidden player! Double-click to guess.', 'info');
   }
 
   // ═══════════════ GAME END CONDITIONS ═══════════════
@@ -399,7 +399,7 @@ class ChameleonGame {
   }
 
   _cleanupSeeking() {
-    document.removeEventListener('mousedown', this._onSeekerClick);
+    document.removeEventListener('dblclick', this._onSeekerClick);
     if (this.seeker) this.seeker.disable();
     this.renderer.disableControls();
     this.ui.hideHUD();
@@ -424,10 +424,10 @@ class ChameleonGame {
     if (this.state !== STATE.HIDER_POSITION) return;
 
     switch (e.code) {
-      case 'KeyW': this.hiderKeys.w = true; break;
-      case 'KeyA': this.hiderKeys.a = true; break;
-      case 'KeyS': this.hiderKeys.s = true; break;
-      case 'KeyD': this.hiderKeys.d = true; break;
+      case 'KeyW': case 'ArrowUp':    this.hiderKeys.w = true; break;
+      case 'KeyA': case 'ArrowLeft':  this.hiderKeys.a = true; break;
+      case 'KeyS': case 'ArrowDown':  this.hiderKeys.s = true; break;
+      case 'KeyD': case 'ArrowRight': this.hiderKeys.d = true; break;
       case 'KeyE':
         if (!this.hiderLocked) {
           this._transitionTo(STATE.HIDER_PAINT);
@@ -438,10 +438,10 @@ class ChameleonGame {
 
   _handleHiderKeyUp(e) {
     switch (e.code) {
-      case 'KeyW': this.hiderKeys.w = false; break;
-      case 'KeyA': this.hiderKeys.a = false; break;
-      case 'KeyS': this.hiderKeys.s = false; break;
-      case 'KeyD': this.hiderKeys.d = false; break;
+      case 'KeyW': case 'ArrowUp':    this.hiderKeys.w = false; break;
+      case 'KeyA': case 'ArrowLeft':  this.hiderKeys.a = false; break;
+      case 'KeyS': case 'ArrowDown':  this.hiderKeys.s = false; break;
+      case 'KeyD': case 'ArrowRight': this.hiderKeys.d = false; break;
     }
   }
 
@@ -495,8 +495,6 @@ class ChameleonGame {
 
   _handleSeekerClick(event) {
     if (this.state !== STATE.SEEKING) return;
-    if (event.button !== 0) return;
-
     if (this.seeker && document.pointerLockElement) {
       this.seeker.processClick(event);
     }

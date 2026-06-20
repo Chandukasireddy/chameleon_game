@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════
-// 🧍 CHARACTER — Paintable Blob with Poses
+// 🧍 CHARACTER — Paintable Human Figure with Poses
 // ═══════════════════════════════════════════════
 
 import * as THREE from 'three';
@@ -15,20 +15,19 @@ export class Character {
     this.texture = null;
 
     // Body parts
-    this.bodyMesh = null;
-    this.allMeshes = []; // All meshes that are part of the character (for raycasting)
+    this.bodyMesh = null;    // torso — used for emissive effects
+    this.bodyGroup = null;   // inner group scaled by poses
+    this.allMeshes = [];
 
-    // Current pose
     this.currentPose = 'standing';
 
-    // Poses
     this.poses = {
-      standing:  { icon: '🧍', name: 'Stand',   scaleX: 1,   scaleY: 1,    scaleZ: 1,   rotX: 0,         posY: 0.75 },
-      crouching: { icon: '🧎', name: 'Crouch',  scaleX: 1.1, scaleY: 0.6,  scaleZ: 1.1, rotX: 0,         posY: 0.45 },
+      standing:  { icon: '🧍', name: 'Stand',   scaleX: 1,   scaleY: 1,    scaleZ: 1,   rotX: 0,          posY: 0.75 },
+      crouching: { icon: '🧎', name: 'Crouch',  scaleX: 1.1, scaleY: 0.62, scaleZ: 1.1, rotX: 0,          posY: 0.48 },
       lying:     { icon: '🛌', name: 'Lie Down', scaleX: 1,   scaleY: 1,    scaleZ: 1,   rotX: Math.PI/2,  posY: 0.35 },
-      ball:      { icon: '⚽', name: 'Ball',     scaleX: 0.8, scaleY: 0.65, scaleZ: 0.8, rotX: 0,         posY: 0.45 },
-      flat:      { icon: '📏', name: 'Flat',     scaleX: 1.8, scaleY: 0.25, scaleZ: 1.8, rotX: 0,         posY: 0.2 },
-      tall:      { icon: '🗿', name: 'Tall',     scaleX: 0.7, scaleY: 1.6,  scaleZ: 0.7, rotX: 0,         posY: 1.2 },
+      ball:      { icon: '⚽', name: 'Ball',     scaleX: 0.8, scaleY: 0.65, scaleZ: 0.8, rotX: 0,          posY: 0.48 },
+      flat:      { icon: '📏', name: 'Flat',     scaleX: 1.8, scaleY: 0.26, scaleZ: 1.8, rotX: 0,          posY: 0.21 },
+      tall:      { icon: '🗿', name: 'Tall',     scaleX: 0.7, scaleY: 1.6,  scaleZ: 0.7, rotX: 0,          posY: 1.22 },
     };
 
     this._build();
@@ -44,152 +43,107 @@ export class Character {
   }
 
   _build() {
-    // Initialize canvas to white
-    this.textureCtx.fillStyle = '#ffffff';
+    this.textureCtx.fillStyle = '#d4b8a0';
     this.textureCtx.fillRect(0, 0, 512, 512);
 
-    // Create texture from canvas
     this.texture = new THREE.CanvasTexture(this.textureCanvas);
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.texture.needsUpdate = true;
 
-    // Material
     const material = new THREE.MeshStandardMaterial({
       map: this.texture,
-      roughness: 0.7,
-      metalness: 0.05,
+      roughness: 0.75,
+      metalness: 0.02,
     });
 
-    // Body — Capsule geometry
-    const bodyGeom = new THREE.CapsuleGeometry(0.35, 0.8, 16, 24);
-    this.bodyMesh = new THREE.Mesh(bodyGeom, material);
-    this.bodyMesh.castShadow = true;
-    this.bodyMesh.receiveShadow = true;
-    this.bodyMesh.userData.isCharacter = true;
-    this.group.add(this.bodyMesh);
+    // Inner group — scaled/rotated by poses
+    this.bodyGroup = new THREE.Group();
+    this.group.add(this.bodyGroup);
 
-    // Eyes (small spheres — non-paintable, always white/black)
-    const eyeGeom = new THREE.SphereGeometry(0.05, 8, 8);
-    const eyeWhiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
-    const pupilMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.3 });
-    const pupilGeom = new THREE.SphereGeometry(0.03, 8, 8);
+    const mkMesh = (geom) => {
+      const m = new THREE.Mesh(geom, material);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      m.userData.isCharacter = true;
+      this.bodyGroup.add(m);
+      return m;
+    };
 
-    // Left eye
-    const leftEye = new THREE.Mesh(eyeGeom, eyeWhiteMat);
-    leftEye.position.set(-0.12, 0.55, 0.3);
-    leftEye.userData.isCharacter = true;
-    this.group.add(leftEye);
+    // ── Head ──
+    const head = mkMesh(new THREE.SphereGeometry(0.2, 14, 12));
+    head.position.set(0, 0.67, 0);
 
-    const leftPupil = new THREE.Mesh(pupilGeom, pupilMat);
-    leftPupil.position.set(-0.12, 0.55, 0.35);
-    leftPupil.userData.isCharacter = true;
-    this.group.add(leftPupil);
+    // ── Torso ──
+    const torso = mkMesh(new THREE.CapsuleGeometry(0.19, 0.38, 6, 14));
+    torso.position.set(0, 0.18, 0);
+    this.bodyMesh = torso;
 
-    // Right eye
-    const rightEye = new THREE.Mesh(eyeGeom, eyeWhiteMat);
-    rightEye.position.set(0.12, 0.55, 0.3);
-    rightEye.userData.isCharacter = true;
-    this.group.add(rightEye);
+    // ── Left arm ──
+    const lArm = mkMesh(new THREE.CapsuleGeometry(0.07, 0.36, 4, 10));
+    lArm.position.set(-0.31, 0.14, 0);
+    lArm.rotation.z = Math.PI / 10;
 
-    const rightPupil = new THREE.Mesh(pupilGeom, pupilMat);
-    rightPupil.position.set(0.12, 0.55, 0.35);
-    rightPupil.userData.isCharacter = true;
-    this.group.add(rightPupil);
+    // ── Right arm ──
+    const rArm = mkMesh(new THREE.CapsuleGeometry(0.07, 0.36, 4, 10));
+    rArm.position.set(0.31, 0.14, 0);
+    rArm.rotation.z = -Math.PI / 10;
 
-    // Collect all meshes
-    this.allMeshes = [this.bodyMesh, leftEye, leftPupil, rightEye, rightPupil];
+    // ── Left leg ──
+    const lLeg = mkMesh(new THREE.CapsuleGeometry(0.095, 0.42, 4, 10));
+    lLeg.position.set(-0.1, -0.4, 0);
 
-    // Default position
+    // ── Right leg ──
+    const rLeg = mkMesh(new THREE.CapsuleGeometry(0.095, 0.42, 4, 10));
+    rLeg.position.set(0.1, -0.4, 0);
+
+    this.allMeshes = [head, torso, lArm, rArm, lLeg, rLeg];
+
     this.group.position.set(0, 0.75, 0);
   }
 
-  /** Add character to a Three.js scene */
-  addToScene(scene) {
-    scene.add(this.group);
-  }
+  addToScene(scene) { scene.add(this.group); }
+  removeFromScene(scene) { scene.remove(this.group); }
 
-  /** Remove from scene */
-  removeFromScene(scene) {
-    scene.remove(this.group);
-  }
+  setPosition(x, y, z) { this.group.position.set(x, y, z); }
+  getPosition() { return this.group.position.clone(); }
 
-  /** Set world position */
-  setPosition(x, y, z) {
-    this.group.position.set(x, y, z);
-  }
+  setRotation(yRad) { this.group.rotation.y = yRad; }
 
-  /** Get world position */
-  getPosition() {
-    return this.group.position.clone();
-  }
-
-  /** Set Y rotation */
-  setRotation(yRad) {
-    this.group.rotation.y = yRad;
-  }
-
-  /** Apply a named pose */
   setPose(poseName) {
     const pose = this.poses[poseName];
     if (!pose) return;
-
     this.currentPose = poseName;
-
-    // Animate to the new pose
-    const targetScale = new THREE.Vector3(pose.scaleX, pose.scaleY, pose.scaleZ);
-    const targetRotX = pose.rotX;
-    const targetPosY = pose.posY;
-
-    // Simple direct application (could be animated with TWEEN later)
-    this.bodyMesh.scale.copy(targetScale);
-    this.bodyMesh.rotation.x = targetRotX;
-    this.group.position.y = targetPosY;
+    this.bodyGroup.scale.set(pose.scaleX, pose.scaleY, pose.scaleZ);
+    this.bodyGroup.rotation.x = pose.rotX;
+    this.group.position.y = pose.posY;
   }
 
-  /** Get list of available poses */
   getPoseList() {
     return Object.entries(this.poses).map(([key, pose]) => ({
-      id: key,
-      icon: pose.icon,
-      name: pose.name,
+      id: key, icon: pose.icon, name: pose.name,
     }));
   }
 
-  /** Update the Three.js texture from the canvas */
   updateTexture() {
-    if (this.texture) {
-      this.texture.needsUpdate = true;
-    }
+    if (this.texture) this.texture.needsUpdate = true;
   }
 
-  /** Show/hide the character */
   show() { this.group.visible = true; }
   hide() { this.group.visible = false; }
 
-  /** Get all meshes for raycasting */
-  getMeshes() {
-    return this.allMeshes;
-  }
+  getMeshes() { return this.allMeshes; }
+  getGroup()  { return this.group; }
 
-  /** Get the character group for raycasting */
-  getGroup() {
-    return this.group;
-  }
-
-  /** Reset to initial state */
   reset() {
-    // Clear canvas to white
-    this.textureCtx.fillStyle = '#ffffff';
+    this.textureCtx.fillStyle = '#d4b8a0';
     this.textureCtx.fillRect(0, 0, 512, 512);
     this.updateTexture();
 
-    // Reset pose
     this.setPose('standing');
     this.group.rotation.y = 0;
     this.group.position.set(0, 0.75, 0);
   }
 
-  /** Cleanup */
   destroy() {
     this.allMeshes.forEach(mesh => {
       if (mesh.geometry) mesh.geometry.dispose();

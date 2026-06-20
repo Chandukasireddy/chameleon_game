@@ -13,12 +13,9 @@ export class SeekerMode {
     this.found = false;
 
     // Callbacks
-    this.onFound = null;     // (event) => void
-    this.onMiss = null;      // (event, guessesLeft) => void
-    this.onOutOfGuesses = null; // () => void
-
-    // Bound handlers
-    this._onClick = this._handleClick.bind(this);
+    this.onFound = null;
+    this.onMiss = null;
+    this.onOutOfGuesses = null;
   }
 
   /** Enable seeker mode */
@@ -27,14 +24,11 @@ export class SeekerMode {
     this.maxGuesses = maxGuesses;
     this.guessesUsed = 0;
     this.found = false;
-
-    this.renderer.renderer.domElement.addEventListener('click', this._onClick);
   }
 
   /** Disable seeker mode */
   disable() {
     this.isActive = false;
-    this.renderer.renderer.domElement.removeEventListener('click', this._onClick);
   }
 
   get guessesLeft() {
@@ -42,17 +36,7 @@ export class SeekerMode {
     return Math.max(0, this.maxGuesses - this.guessesUsed);
   }
 
-  _handleClick(event) {
-    if (!this.isActive || this.found) return;
-
-    // Don't process if pointer is locked (FPS mode click to lock)
-    if (document.pointerLockElement) {
-      // In FPS mode — raycast from center
-      this._processRaycast(event, true);
-    }
-  }
-
-  /** Also called externally when pointer is locked and user clicks */
+  /** Called from main.js on double-click while pointer is locked */
   processClick(event) {
     if (!this.isActive || this.found) return;
     this._processRaycast(event, document.pointerLockElement != null);

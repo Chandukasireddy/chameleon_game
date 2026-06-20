@@ -368,10 +368,10 @@ export class GameRenderer {
   _handleKeyDown(e) {
     if (this.controlMode === 'fps') {
       switch (e.code) {
-        case 'KeyW': this.fpsState.moveForward = true; break;
-        case 'KeyS': this.fpsState.moveBackward = true; break;
-        case 'KeyA': this.fpsState.moveLeft = true; break;
-        case 'KeyD': this.fpsState.moveRight = true; break;
+        case 'KeyW': case 'ArrowUp':    this.fpsState.moveForward  = true; break;
+        case 'KeyS': case 'ArrowDown':  this.fpsState.moveBackward = true; break;
+        case 'KeyA': case 'ArrowLeft':  this.fpsState.moveLeft     = true; break;
+        case 'KeyD': case 'ArrowRight': this.fpsState.moveRight    = true; break;
       }
     }
   }
@@ -379,10 +379,10 @@ export class GameRenderer {
   _handleKeyUp(e) {
     if (this.controlMode === 'fps') {
       switch (e.code) {
-        case 'KeyW': this.fpsState.moveForward = false; break;
-        case 'KeyS': this.fpsState.moveBackward = false; break;
-        case 'KeyA': this.fpsState.moveLeft = false; break;
-        case 'KeyD': this.fpsState.moveRight = false; break;
+        case 'KeyW': case 'ArrowUp':    this.fpsState.moveForward  = false; break;
+        case 'KeyS': case 'ArrowDown':  this.fpsState.moveBackward = false; break;
+        case 'KeyA': case 'ArrowLeft':  this.fpsState.moveLeft     = false; break;
+        case 'KeyD': case 'ArrowRight': this.fpsState.moveRight    = false; break;
       }
     }
   }

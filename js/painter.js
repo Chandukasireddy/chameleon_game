@@ -1,6 +1,5 @@
 // ═══════════════════════════════════════════════
-// 🎨 PAINTER — Paint Tool for Character Texture
-// Direct 3D painting + Eyedropper from environment
+// 🎨 PAINTER — Natural soft-brush painting on character texture
 // ═══════════════════════════════════════════════
 
 export class PaintTool {
@@ -8,66 +7,72 @@ export class PaintTool {
     this.character = character;
     this.renderer = renderer;
 
-    // Paint canvas & context
     this.canvas = character.textureCanvas;
     this.ctx = character.textureCtx;
 
-    // Tool state
-    this.currentTool = 'brush';   // brush, eyedropper, fill, eraser
+    this.currentTool = 'brush';
     this.currentColor = '#ffffff';
-    this.brushSize = 12;
+    this.brushSize = 18;
     this.opacity = 1.0;
     this.isActive = false;
 
-    // Undo/Redo
     this.undoStack = [];
     this.redoStack = [];
     this.maxUndoSteps = 30;
 
-    // Painting state
     this.isPainting = false;
     this.lastPaintUV = null;
 
-    // Callbacks
     this.onColorChange = null;
 
-    // Bound handlers
-    this._onMouseDown = this._handleMouseDown.bind(this);
-    this._onMouseMove = this._handleMouseMove.bind(this);
-    this._onMouseUp = this._handleMouseUp.bind(this);
+    this._onMouseDown   = this._handleMouseDown.bind(this);
+    this._onMouseMove   = this._handleMouseMove.bind(this);
+    this._onMouseUp     = this._handleMouseUp.bind(this);
+    this._onCursorMove  = this._handleCursorMove.bind(this);
+    this._onCanvasLeave = this._handleCanvasLeave.bind(this);
+    this._onCanvasEnter = this._handleCanvasEnter.bind(this);
 
-    // Save initial state
     this._saveUndo();
   }
 
-  /** Enable painting mode */
   enable() {
     this.isActive = true;
     const canvas = this.renderer.renderer.domElement;
-    canvas.addEventListener('mousedown', this._onMouseDown);
-    canvas.addEventListener('mousemove', this._onMouseMove);
-    canvas.addEventListener('mouseup', this._onMouseUp);
+    canvas.style.cursor = 'none';
+    canvas.addEventListener('mousedown',  this._onMouseDown);
+    canvas.addEventListener('mousemove',  this._onMouseMove);
+    canvas.addEventListener('mousemove',  this._onCursorMove);
+    canvas.addEventListener('mouseup',    this._onMouseUp);
     canvas.addEventListener('mouseleave', this._onMouseUp);
+    canvas.addEventListener('mouseleave', this._onCanvasLeave);
+    canvas.addEventListener('mouseenter', this._onCanvasEnter);
+
+    const cursor = document.getElementById('paint-cursor');
+    if (cursor) cursor.classList.remove('hidden');
+    this._updateCursorSize();
   }
 
-  /** Disable painting mode */
   disable() {
     this.isActive = false;
     this.isPainting = false;
     const canvas = this.renderer.renderer.domElement;
-    canvas.removeEventListener('mousedown', this._onMouseDown);
-    canvas.removeEventListener('mousemove', this._onMouseMove);
-    canvas.removeEventListener('mouseup', this._onMouseUp);
+    canvas.style.cursor = '';
+    canvas.removeEventListener('mousedown',  this._onMouseDown);
+    canvas.removeEventListener('mousemove',  this._onMouseMove);
+    canvas.removeEventListener('mousemove',  this._onCursorMove);
+    canvas.removeEventListener('mouseup',    this._onMouseUp);
     canvas.removeEventListener('mouseleave', this._onMouseUp);
+    canvas.removeEventListener('mouseleave', this._onCanvasLeave);
+    canvas.removeEventListener('mouseenter', this._onCanvasEnter);
+
+    const cursor = document.getElementById('paint-cursor');
+    if (cursor) cursor.classList.add('hidden');
   }
 
-  setTool(toolName) {
-    this.currentTool = toolName;
-  }
+  setTool(toolName) { this.currentTool = toolName; }
 
   setColor(hexColor) {
     this.currentColor = hexColor;
-    // Update the color preview
     const preview = document.getElementById('color-preview');
     if (preview) preview.style.background = hexColor;
     const input = document.getElementById('color-input');
@@ -76,6 +81,7 @@ export class PaintTool {
 
   setBrushSize(size) {
     this.brushSize = Math.max(2, Math.min(60, size));
+    this._updateCursorSize();
   }
 
   setOpacity(opacity) {
@@ -87,18 +93,15 @@ export class PaintTool {
   _saveUndo() {
     const imageData = this.ctx.getImageData(0, 0, 512, 512);
     this.undoStack.push(imageData);
-    if (this.undoStack.length > this.maxUndoSteps) {
-      this.undoStack.shift();
-    }
-    this.redoStack = []; // Clear redo on new action
+    if (this.undoStack.length > this.maxUndoSteps) this.undoStack.shift();
+    this.redoStack = [];
   }
 
   undo() {
-    if (this.undoStack.length <= 1) return; // Keep at least initial state
+    if (this.undoStack.length <= 1) return;
     const current = this.undoStack.pop();
     this.redoStack.push(current);
-    const prev = this.undoStack[this.undoStack.length - 1];
-    this.ctx.putImageData(prev, 0, 0);
+    this.ctx.putImageData(this.undoStack[this.undoStack.length - 1], 0, 0);
     this.character.updateTexture();
     this._updatePreview();
   }
@@ -114,78 +117,84 @@ export class PaintTool {
 
   clear() {
     this._saveUndo();
-    this.ctx.fillStyle = '#ffffff';
+    this.ctx.fillStyle = '#d4b8a0';
     this.ctx.fillRect(0, 0, 512, 512);
     this.character.updateTexture();
     this._updatePreview();
   }
 
-  // ─── Paint Operations ───
+  // ─── Soft brush helpers ───
+
+  _hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+  }
+
+  _drawSoftDot(x, y, color, size, opacity) {
+    const grad = this.ctx.createRadialGradient(x, y, 0, x, y, size);
+    grad.addColorStop(0,   this._hexToRgba(color, opacity));
+    grad.addColorStop(0.45, this._hexToRgba(color, opacity * 0.72));
+    grad.addColorStop(1,   this._hexToRgba(color, 0));
+    this.ctx.fillStyle = grad;
+    this.ctx.beginPath();
+    this.ctx.arc(x, y, size, 0, Math.PI * 2);
+    this.ctx.fill();
+  }
+
+  _drawSoftEraseDot(x, y, size) {
+    const grad = this.ctx.createRadialGradient(x, y, 0, x, y, size);
+    grad.addColorStop(0,    'rgba(212,184,160,1)');
+    grad.addColorStop(0.45, 'rgba(212,184,160,0.72)');
+    grad.addColorStop(1,    'rgba(212,184,160,0)');
+    this.ctx.fillStyle = grad;
+    this.ctx.beginPath();
+    this.ctx.arc(x, y, size, 0, Math.PI * 2);
+    this.ctx.fill();
+  }
+
+  // ─── Paint along a path with interpolated dots ───
 
   _paintAtUV(u, v) {
     const x = u * 512;
     const y = (1 - v) * 512;
 
-    this.ctx.save();
-    this.ctx.globalAlpha = this.opacity;
-
-    if (this.currentTool === 'brush') {
-      this.ctx.fillStyle = this.currentColor;
-      this.ctx.beginPath();
-      this.ctx.arc(x, y, this.brushSize, 0, Math.PI * 2);
-      this.ctx.fill();
-
-      // Smooth stroke between last and current point
-      if (this.lastPaintUV) {
-        const lx = this.lastPaintUV.u * 512;
-        const ly = (1 - this.lastPaintUV.v) * 512;
-        this.ctx.lineWidth = this.brushSize * 2;
-        this.ctx.strokeStyle = this.currentColor;
-        this.ctx.lineCap = 'round';
-        this.ctx.beginPath();
-        this.ctx.moveTo(lx, ly);
-        this.ctx.lineTo(x, y);
-        this.ctx.stroke();
-      }
-    } else if (this.currentTool === 'eraser') {
-      // Erase to white
-      this.ctx.globalCompositeOperation = 'source-over';
-      this.ctx.fillStyle = '#ffffff';
-      this.ctx.beginPath();
-      this.ctx.arc(x, y, this.brushSize, 0, Math.PI * 2);
-      this.ctx.fill();
+    if (this.currentTool === 'brush' || this.currentTool === 'eraser') {
+      const drawDot = this.currentTool === 'brush'
+        ? (px, py) => this._drawSoftDot(px, py, this.currentColor, this.brushSize, this.opacity)
+        : (px, py) => this._drawSoftEraseDot(px, py, this.brushSize);
 
       if (this.lastPaintUV) {
         const lx = this.lastPaintUV.u * 512;
         const ly = (1 - this.lastPaintUV.v) * 512;
-        this.ctx.lineWidth = this.brushSize * 2;
-        this.ctx.strokeStyle = '#ffffff';
-        this.ctx.lineCap = 'round';
-        this.ctx.beginPath();
-        this.ctx.moveTo(lx, ly);
-        this.ctx.lineTo(x, y);
-        this.ctx.stroke();
+        const dist = Math.sqrt((x - lx) ** 2 + (y - ly) ** 2);
+        const spacing = Math.max(1, this.brushSize * 0.18);
+        const steps = Math.ceil(dist / spacing);
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps;
+          drawDot(lx + (x - lx) * t, ly + (y - ly) * t);
+        }
       }
+      drawDot(x, y);
+
     } else if (this.currentTool === 'fill') {
-      // Simple fill — fill whole canvas with current color
+      this.ctx.save();
+      this.ctx.globalAlpha = this.opacity;
       this.ctx.fillStyle = this.currentColor;
       this.ctx.fillRect(0, 0, 512, 512);
+      this.ctx.restore();
     }
 
-    this.ctx.restore();
     this.character.updateTexture();
     this.lastPaintUV = { u, v };
   }
 
   _eyedropFromScene(event) {
-    // Raycast against all non-character objects
     const allObjects = [];
     this.renderer.scene.traverse(obj => {
-      if (obj.isMesh && !obj.userData.isCharacter) {
-        allObjects.push(obj);
-      }
+      if (obj.isMesh && !obj.userData.isCharacter) allObjects.push(obj);
     });
-
     const intersects = this.renderer.raycast(event, allObjects, false);
     if (intersects.length > 0) {
       const color = this.renderer.getColorAtIntersection(intersects[0]);
@@ -195,7 +204,6 @@ export class PaintTool {
   }
 
   _normalizeColor(color) {
-    // Convert various formats to hex
     if (color.startsWith('#')) return color;
     if (color.startsWith('rgb')) {
       const match = color.match(/\d+/g);
@@ -213,7 +221,7 @@ export class PaintTool {
 
   _handleMouseDown(event) {
     if (!this.isActive) return;
-    if (event.button === 2) return; // Right click = camera orbit
+    if (event.button === 2) return;
     if (event.button !== 0) return;
 
     if (this.currentTool === 'eyedropper') {
@@ -221,7 +229,6 @@ export class PaintTool {
       return;
     }
 
-    // Raycast against character
     const intersects = this.renderer.raycast(event, this.character.getMeshes(), false);
 
     if (intersects.length > 0 && intersects[0].uv) {
@@ -229,21 +236,16 @@ export class PaintTool {
       this.isPainting = true;
       this.lastPaintUV = null;
       this._paintAtUV(intersects[0].uv.x, intersects[0].uv.y);
-    } else if (intersects.length > 0 && !intersects[0].uv) {
-      // Hit character but no UV (eyes etc) — use approximate UV
+    } else if (intersects.length > 0) {
       this._saveUndo();
       this.isPainting = true;
       this.lastPaintUV = null;
-      // Map world position to approximate UV
       const localPos = this.character.getGroup().worldToLocal(intersects[0].point.clone());
       const u = (Math.atan2(localPos.x, localPos.z) / Math.PI + 1) / 2;
       const v = (localPos.y + 0.75) / 1.5;
       this._paintAtUV(u, Math.max(0, Math.min(1, v)));
-    } else {
-      // Clicked empty space — if eyedropper, sample from environment
-      if (this.currentTool === 'eyedropper') {
-        this._eyedropFromScene(event);
-      }
+    } else if (this.currentTool === 'eyedropper') {
+      this._eyedropFromScene(event);
     }
   }
 
@@ -270,7 +272,35 @@ export class PaintTool {
     }
   }
 
-  /** Update the texture preview canvas */
+  // ─── Cursor ───
+
+  _handleCursorMove(event) {
+    const cursor = document.getElementById('paint-cursor');
+    if (!cursor) return;
+    cursor.style.left = event.clientX + 'px';
+    cursor.style.top  = event.clientY + 'px';
+  }
+
+  _handleCanvasLeave() {
+    const cursor = document.getElementById('paint-cursor');
+    if (cursor) cursor.style.opacity = '0';
+  }
+
+  _handleCanvasEnter() {
+    const cursor = document.getElementById('paint-cursor');
+    if (cursor) cursor.style.opacity = '1';
+  }
+
+  _updateCursorSize() {
+    const cursor = document.getElementById('paint-cursor');
+    if (!cursor) return;
+    const px = Math.max(10, Math.min(100, this.brushSize * 2.6));
+    cursor.style.width  = px + 'px';
+    cursor.style.height = px + 'px';
+  }
+
+  // ─── Preview ───
+
   _updatePreview() {
     const preview = document.getElementById('texture-preview');
     if (!preview) return;
@@ -279,10 +309,7 @@ export class PaintTool {
     pctx.drawImage(this.canvas, 0, 0, preview.width, preview.height);
   }
 
-  /** Force update preview */
-  updatePreview() {
-    this._updatePreview();
-  }
+  updatePreview() { this._updatePreview(); }
 
   destroy() {
     this.disable();
