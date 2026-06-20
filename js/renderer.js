@@ -32,7 +32,7 @@ export class GameRenderer {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.toneMappingExposure = 1.2;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
 
@@ -64,6 +64,9 @@ export class GameRenderer {
 
     // Movement bounds (set per map)
     this.bounds = null;
+
+    // Solid colliders (axis-aligned boxes) — walls & props
+    this.colliders = [];
 
     // ─── Animation ───
     this.animationId = null;
@@ -262,6 +265,33 @@ export class GameRenderer {
     this.bounds = bounds;
   }
 
+  setColliders(colliders) {
+    this.colliders = colliders || [];
+  }
+
+  /** True if a circle (cx,cz,r) overlaps any solid collider box */
+  collidesAt(cx, cz, r) {
+    for (let i = 0; i < this.colliders.length; i++) {
+      const c = this.colliders[i];
+      if (cx > c.minX - r && cx < c.maxX + r && cz > c.minZ - r && cz < c.maxZ + r) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Resolve a desired move with wall sliding: each axis is tried
+   * independently so the body slides along surfaces instead of stopping
+   * dead or passing through them.
+   */
+  resolveMove(oldX, oldZ, newX, newZ, r) {
+    let x = oldX, z = oldZ;
+    if (!this.collidesAt(newX, z, r)) x = newX;
+    if (!this.collidesAt(x, newZ, r)) z = newZ;
+    return { x, z };
+  }
+
   setFog(color, density) {
     this.scene.fog = new THREE.FogExp2(color, density);
   }
@@ -306,16 +336,22 @@ export class GameRenderer {
 
     if (move.lengthSq() > 0) {
       move.normalize().multiplyScalar(speed);
-      const newPos = this.camera.position.clone().add(move);
+      let newX = this.camera.position.x + move.x;
+      let newZ = this.camera.position.z + move.z;
 
       // Enforce bounds
       if (this.bounds) {
-        newPos.x = Math.max(this.bounds.minX + 0.5, Math.min(this.bounds.maxX - 0.5, newPos.x));
-        newPos.z = Math.max(this.bounds.minZ + 0.5, Math.min(this.bounds.maxZ - 0.5, newPos.z));
+        newX = Math.max(this.bounds.minX + 0.5, Math.min(this.bounds.maxX - 0.5, newX));
+        newZ = Math.max(this.bounds.minZ + 0.5, Math.min(this.bounds.maxZ - 0.5, newZ));
       }
-      newPos.y = 1.7; // Fixed eye height
 
-      this.camera.position.copy(newPos);
+      // Slide along walls instead of clipping through them
+      const r = 0.4;
+      const resolved = this.resolveMove(this.camera.position.x, this.camera.position.z, newX, newZ, r);
+
+      this.camera.position.x = resolved.x;
+      this.camera.position.z = resolved.z;
+      this.camera.position.y = 1.7; // Fixed eye height
     }
   }
 

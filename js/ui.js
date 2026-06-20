@@ -193,11 +193,17 @@ export class GameUI {
 
   showPaintUI() {
     if (this.paintToolbar) this.paintToolbar.classList.remove('hidden');
-    if (this.poseSelector) this.poseSelector.classList.remove('hidden');
   }
 
   hidePaintUI() {
     if (this.paintToolbar) this.paintToolbar.classList.add('hidden');
+  }
+
+  showPoseSelector() {
+    if (this.poseSelector) this.poseSelector.classList.remove('hidden');
+  }
+
+  hidePoseSelector() {
     if (this.poseSelector) this.poseSelector.classList.add('hidden');
   }
 

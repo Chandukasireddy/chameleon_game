@@ -50,6 +50,10 @@ class ChameleonGame {
     this.hiderKeys = { w: false, a: false, s: false, d: false, up: false, down: false, left: false, right: false };
     this.hiderRotation = 0;
     this.hiderLocked = false;
+    this.hiderInitialized = false;   // full map/character setup done once per round
+    this.hiderFacing = 0;            // direction the character is turning toward
+    this.camYaw = 0;                 // smoothed follow-camera yaw
+    this.poseSelectorBuilt = false;
 
     // Bound handlers
     this._onHiderKeyDown = this._handleHiderKeyDown.bind(this);
@@ -118,11 +122,14 @@ class ChameleonGame {
 
     // Disable hider controls
     this._disableHiderMovement();
+    this.hiderInitialized = false;
+    this.poseSelectorBuilt = false;
 
     // UI
     this.ui.hideAllScreens();
     this.ui.hideHUD();
     this.ui.hidePaintUI();
+    this.ui.hidePoseSelector();
     this.ui.hideCrosshair();
     this.ui.showScreen('menu');
 
@@ -132,7 +139,15 @@ class ChameleonGame {
   // ─── HIDER INTRO ───
 
   _enterHiderIntro() {
+    // Start a fresh hiding round — rebuild map, character & painter
+    this.hiderInitialized = false;
+    this.poseSelectorBuilt = false;
+    if (this.painter) { this.painter.destroy(); this.painter = null; }
+    if (this.seeker) { this.seeker.destroy(); this.seeker = null; }
+
     this.ui.hideAllScreens();
+    this.ui.hidePoseSelector();
+    this.ui.hidePaintUI();
     this.ui.showScreen('hiderIntro');
     this.audio.play('whoosh');
   }
@@ -142,58 +157,86 @@ class ChameleonGame {
   _enterHiderPosition() {
     this.ui.hideAllScreens();
 
-    // Load the selected map
-    this.currentMap = this.ui.getSelectedMap();
-    const mapInfo = MAP_DATA[this.currentMap];
+    // ── First-time setup for this round (skipped when resuming from unlock) ──
+    if (!this.hiderInitialized) {
+      this.currentMap = this.ui.getSelectedMap();
+      const mapInfo = MAP_DATA[this.currentMap];
 
-    // Setup scene
-    this.renderer.clearScene();
-    this.renderer.setBackground(mapInfo.fogColor);
-    this.renderer.setFog(mapInfo.fogColor, mapInfo.fogDensity);
+      // Setup scene
+      this.renderer.clearScene();
+      this.renderer.setBackground(mapInfo.fogColor);
+      this.renderer.setFog(mapInfo.fogColor, mapInfo.fogDensity);
 
-    // Load map
-    this.mapData = loadMap(this.currentMap, this.renderer.scene);
-    this.renderer.setBounds(this.mapData.bounds);
+      // Load map (+ build wall colliders)
+      this.mapData = loadMap(this.currentMap, this.renderer.scene);
+      this.renderer.setBounds(this.mapData.bounds);
+      this.renderer.setColliders(this.mapData.colliders);
 
-    // Add character to scene
-    this.character.reset();
-    this.character.addToScene(this.renderer.scene);
-    this.character.setPosition(
-      this.mapData.hiderSpawn.x,
-      this.mapData.hiderSpawn.y,
-      this.mapData.hiderSpawn.z
-    );
+      // Add character to scene at spawn
+      this.character.reset();
+      this.character.addToScene(this.renderer.scene);
+      this.character.setPosition(
+        this.mapData.hiderSpawn.x,
+        this.mapData.hiderSpawn.y,
+        this.mapData.hiderSpawn.z
+      );
+      this.hiderFacing = 0;
+      this.camYaw = 0;
 
-    // Camera follows character from behind
+      // Render loop: drive movement, walking & follow camera every frame
+      this.renderer.onRenderCallback = (delta) => {
+        if (this.state === STATE.HIDER_POSITION) {
+          this._updateHiderMovement(delta);
+        }
+        this.character.update(delta);
+      };
+      this.renderer.startLoop();
+
+      // Audio
+      this.audio.init();
+      this.audio.startAmbient(this.currentMap);
+
+      this.hiderInitialized = true;
+    }
+
+    // Switch the camera back to third-person follow
+    this.renderer.disableControls();
+    this._snapFollowCamera();
+
+    // Unlocked & free to move
     this.hiderLocked = false;
-    this.hiderRotation = 0;
-    this._updateHiderCamera();
+    this.character.setWalking(false);
 
-    // Start render loop
-    this.renderer.onRenderCallback = (delta) => {
-      if (this.state === STATE.HIDER_POSITION) {
-        this._updateHiderMovement(delta);
-      }
-    };
-    this.renderer.startLoop();
+    // Pause painting if we came back from paint mode
+    if (this.painter) this.painter.disable();
 
     // Enable hider keyboard controls
     this._enableHiderMovement();
 
+    // Pose options are available from the very start
+    this._ensurePoseSelector();
+
     // HUD
     this.ui.showHUD();
     this.ui.setPhase('🚶', 'FIND A SPOT');
-    this.ui.setControlsHint(['WASD/Arrows: Move', 'Mouse: Look (right-click drag)', 'E: Lock Position & Paint']);
+    this.ui.setControlsHint(['WASD/Arrows: Move', 'Pick a pose anytime', 'L: Lock / Unlock & Paint']);
     this.ui.hidePaintUI();
+    this.ui.showPoseSelector();
     this.ui.hideTimer();
     this.ui.hideGuessCounter();
     this.ui.hideCrosshair();
 
-    // Audio
-    this.audio.init();
-    this.audio.startAmbient(this.currentMap);
+    this.ui.showNotification('Walk around to find a spot. Pick a pose, then press L to lock & paint.', 'info');
+  }
 
-    this.ui.showNotification('Find a good hiding spot! Press E to start painting.', 'info');
+  /** Build the pose selector once; it stays live across position & paint phases */
+  _ensurePoseSelector() {
+    if (this.poseSelectorBuilt) return;
+    this.ui.buildPoseSelector(this.character.getPoseList(), (poseId) => {
+      this.character.setPose(poseId);
+      this.audio.play('pop');
+    });
+    this.poseSelectorBuilt = true;
   }
 
   // ─── HIDER PAINT ───
@@ -201,38 +244,37 @@ class ChameleonGame {
   _enterHiderPaint() {
     this.hiderLocked = true;
     this._disableHiderMovement();
+    this.character.setWalking(false);
 
     // Setup orbit controls centered on character
     const charPos = this.character.getPosition();
     this.renderer.disableControls();
     this.renderer.enableOrbitControls(charPos);
 
-    // Create painter
-    this.painter = new PaintTool(this.character, this.renderer);
+    // Create the painter once, then reuse it so painted texture survives unlock
+    if (!this.painter) {
+      this.painter = new PaintTool(this.character, this.renderer);
+      this.painter.onColorChange = (color) => {
+        this.ui.showNotification(`Color sampled: ${color}`, 'success');
+      };
+      this._setupPaintToolUI();
+    }
     this.painter.enable();
-    this.painter.onColorChange = (color) => {
-      this.ui.showNotification(`Color sampled: ${color}`, 'success');
-    };
 
-    // Setup paint tool UI interactions
-    this._setupPaintToolUI();
-
-    // Build pose selector
-    this.ui.buildPoseSelector(this.character.getPoseList(), (poseId) => {
-      this.character.setPose(poseId);
-      this.audio.play('pop');
-    });
+    // Make sure pose options exist (also usable while painting)
+    this._ensurePoseSelector();
 
     // Update HUD
     this.ui.setPhase('🎨', 'PAINTING');
-    this.ui.setControlsHint(['Left-click: Paint on character', 'Right-drag: Rotate view', 'Scroll: Zoom']);
+    this.ui.setControlsHint(['Left-click: Paint', 'Right-drag: Rotate', 'L: Unlock & move again']);
     this.ui.showPaintUI();
+    this.ui.showPoseSelector();
 
     // Update texture preview
     this.painter.updatePreview();
 
     this.audio.play('lock');
-    this.ui.showNotification('Position locked! Now paint yourself to blend in.', 'success');
+    this.ui.showNotification('Locked! Paint to blend in — press L to unlock and reposition.', 'success');
   }
 
   // ─── HANDOFF ───
@@ -245,6 +287,7 @@ class ChameleonGame {
     // Hide game UI
     this.ui.hideHUD();
     this.ui.hidePaintUI();
+    this.ui.hidePoseSelector();
     this.ui.hideCrosshair();
 
     // Show handoff screen
@@ -281,6 +324,13 @@ class ChameleonGame {
 
   _enterSeeking() {
     this.ui.hideAllScreens();
+
+    // Thicken the fog so the seeker can't scan the whole map from one spot —
+    // they have to physically walk around to uncover hiding places.
+    const mapInfo = MAP_DATA[this.currentMap];
+    const seekFog = mapInfo.seekFog || (mapInfo.fogDensity * 3);
+    this.renderer.setFog(mapInfo.fogColor, seekFog);
+    this.renderer.setBackground(mapInfo.fogColor);
 
     // Setup FPS controls starting from seeker spawn
     this.renderer.enableFPSControls(
@@ -428,7 +478,8 @@ class ChameleonGame {
       case 'KeyA': case 'ArrowLeft':  this.hiderKeys.a = true; break;
       case 'KeyS': case 'ArrowDown':  this.hiderKeys.s = true; break;
       case 'KeyD': case 'ArrowRight': this.hiderKeys.d = true; break;
-      case 'KeyE':
+      case 'KeyL':
+      case 'KeyE': // legacy lock key still works
         if (!this.hiderLocked) {
           this._transitionTo(STATE.HIDER_PAINT);
         }
@@ -446,49 +497,89 @@ class ChameleonGame {
   }
 
   _updateHiderMovement(delta) {
-    if (this.hiderLocked) return;
-
-    const speed = 5 * delta;
     const pos = this.character.getPosition();
-    let moved = false;
 
-    // Calculate movement direction based on camera
-    const camDir = new THREE.Vector3();
-    this.renderer.camera.getWorldDirection(camDir);
-    camDir.y = 0;
-    camDir.normalize();
-    const right = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0, 1, 0));
+    if (!this.hiderLocked) {
+      const speed = 4.5 * delta;
 
-    if (this.hiderKeys.w) { pos.add(camDir.multiplyScalar(speed)); moved = true; camDir.normalize(); }
-    if (this.hiderKeys.s) { pos.sub(camDir.clone().normalize().multiplyScalar(speed)); moved = true; }
-    if (this.hiderKeys.a) { pos.sub(right.clone().normalize().multiplyScalar(speed)); moved = true; }
-    if (this.hiderKeys.d) { pos.add(right.clone().normalize().multiplyScalar(speed)); moved = true; }
+      // Movement is relative to where the camera is looking
+      const camDir = new THREE.Vector3();
+      this.renderer.camera.getWorldDirection(camDir);
+      camDir.y = 0;
+      camDir.normalize();
+      const right = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize();
 
-    // Enforce bounds
-    if (this.mapData && this.mapData.bounds) {
-      const b = this.mapData.bounds;
-      pos.x = Math.max(b.minX + 0.5, Math.min(b.maxX - 0.5, pos.x));
-      pos.z = Math.max(b.minZ + 0.5, Math.min(b.maxZ - 0.5, pos.z));
+      const move = new THREE.Vector3();
+      if (this.hiderKeys.w) move.add(camDir);
+      if (this.hiderKeys.s) move.sub(camDir);
+      if (this.hiderKeys.d) move.add(right);
+      if (this.hiderKeys.a) move.sub(right);
+
+      const moving = move.lengthSq() > 0;
+      this.character.setWalking(moving, 1);
+
+      if (moving) {
+        move.normalize().multiplyScalar(speed);
+        let newX = pos.x + move.x;
+        let newZ = pos.z + move.z;
+
+        // Keep inside the map bounds
+        if (this.mapData && this.mapData.bounds) {
+          const b = this.mapData.bounds;
+          newX = Math.max(b.minX + 0.5, Math.min(b.maxX - 0.5, newX));
+          newZ = Math.max(b.minZ + 0.5, Math.min(b.maxZ - 0.5, newZ));
+        }
+
+        // Slide along walls instead of passing through them
+        const resolved = this.renderer.resolveMove(pos.x, pos.z, newX, newZ, 0.35);
+        this.character.setPosition(resolved.x, pos.y, resolved.z);
+
+        // Turn the body to face the direction of travel
+        this.hiderFacing = Math.atan2(move.x, move.z);
+      }
+
+      // Smoothly rotate the character toward its facing direction
+      this.character.setRotation(
+        this._lerpAngle(this.character.getRotation(), this.hiderFacing, Math.min(1, delta * 10))
+      );
     }
 
-    if (moved) {
-      this.character.setPosition(pos.x, pos.y, pos.z);
-      this._updateHiderCamera();
-    }
+    // Follow camera every frame (gives the smooth trailing motion)
+    this._updateFollowCamera(delta);
   }
 
-  _updateHiderCamera() {
+  /** Smooth third-person camera that trails behind the character's facing */
+  _updateFollowCamera(delta) {
     const pos = this.character.getPosition();
-    // Third person camera behind and above character
-    const camOffset = new THREE.Vector3(0, 3, 5);
-    const camTarget = pos.clone();
-    camTarget.y += 1;
+    const dist = 5.2, height = 2.8;
 
-    this.renderer.camera.position.copy(pos.clone().add(camOffset));
-    this.renderer.camera.lookAt(camTarget);
+    // Camera yaw eases toward the character's facing so turns feel cinematic
+    this.camYaw = this._lerpAngle(this.camYaw, this.hiderFacing, Math.min(1, delta * 3.2));
 
-    // Enable orbit for looking around
-    this.renderer.orbitState.target.copy(camTarget);
+    const behind = new THREE.Vector3(-Math.sin(this.camYaw), 0, -Math.cos(this.camYaw)).multiplyScalar(dist);
+    const desired = new THREE.Vector3(pos.x + behind.x, pos.y + height, pos.z + behind.z);
+
+    this.renderer.camera.position.lerp(desired, Math.min(1, delta * 6));
+    const target = new THREE.Vector3(pos.x, pos.y + 0.9, pos.z);
+    this.renderer.camera.lookAt(target);
+  }
+
+  /** Place the camera directly behind the character with no easing */
+  _snapFollowCamera() {
+    const pos = this.character.getPosition();
+    const dist = 5.2, height = 2.8;
+    this.camYaw = this.hiderFacing;
+    const behind = new THREE.Vector3(-Math.sin(this.camYaw), 0, -Math.cos(this.camYaw)).multiplyScalar(dist);
+    this.renderer.camera.position.set(pos.x + behind.x, pos.y + height, pos.z + behind.z);
+    this.renderer.camera.lookAt(pos.x, pos.y + 0.9, pos.z);
+  }
+
+  /** Shortest-path angular interpolation */
+  _lerpAngle(a, b, t) {
+    let diff = (b - a) % (Math.PI * 2);
+    if (diff > Math.PI) diff -= Math.PI * 2;
+    if (diff < -Math.PI) diff += Math.PI * 2;
+    return a + diff * t;
   }
 
   // ═══════════════ SEEKER CLICK ═══════════════
@@ -573,6 +664,9 @@ class ChameleonGame {
     document.addEventListener('keydown', (e) => {
       if (this.state !== STATE.HIDER_PAINT) return;
       switch (e.code) {
+        case 'KeyL': // unlock & go back to moving/repositioning
+          this._transitionTo(STATE.HIDER_POSITION);
+          break;
         case 'KeyB': this._selectTool('brush'); break;
         case 'KeyI': this._selectTool('eyedropper'); break;
         case 'KeyG': this._selectTool('fill'); break;

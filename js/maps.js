@@ -6,6 +6,9 @@ import * as THREE from 'three';
 
 // ─── Shared helpers ───
 
+// Anything standing >= this tall becomes a solid the players collide with.
+const COLLIDE_MIN_H = 0.5;
+
 function box(w, h, d, color, x, y, z, opts = {}) {
   const geom = new THREE.BoxGeometry(w, h, d);
   const mat = new THREE.MeshStandardMaterial({
@@ -20,6 +23,7 @@ function box(w, h, d, color, x, y, z, opts = {}) {
   mesh.receiveShadow = true;
   if (opts.rotY) mesh.rotation.y = opts.rotY;
   if (opts.rotX) mesh.rotation.x = opts.rotX;
+  mesh.userData.collide = opts.collide ?? (h >= COLLIDE_MIN_H);
   return mesh;
 }
 
@@ -29,6 +33,7 @@ function cylinder(rTop, rBot, h, color, x, y, z, opts = {}) {
     color,
     roughness: opts.roughness ?? 0.8,
     metalness: opts.metalness ?? 0.05,
+    ...(opts.emissive ? { emissive: opts.emissive, emissiveIntensity: opts.emissiveIntensity || 1 } : {}),
   });
   const mesh = new THREE.Mesh(geom, mat);
   mesh.position.set(x, y, z);
@@ -36,6 +41,8 @@ function cylinder(rTop, rBot, h, color, x, y, z, opts = {}) {
   mesh.receiveShadow = true;
   if (opts.rotX) mesh.rotation.x = opts.rotX;
   if (opts.rotZ) mesh.rotation.z = opts.rotZ;
+  // Only collide with upright cylinders (rotated pipes/rungs stay passable)
+  mesh.userData.collide = opts.collide ?? (h >= COLLIDE_MIN_H && !opts.rotX && !opts.rotZ);
   return mesh;
 }
 
@@ -77,61 +84,97 @@ function pointLight(color, intensity, x, y, z, distance = 15) {
   return light;
 }
 
+function hemiLight(sky, ground, intensity) {
+  return new THREE.HemisphereLight(sky, ground, intensity);
+}
+
+// A bright, glossy decorative ball — used to scatter colour around the maps.
+function orb(r, color, x, y, z) {
+  return sphere(r, color, x, y, z, { roughness: 0.25, metalness: 0.1,
+    emissive: color, emissiveIntensity: 0.25 });
+}
+
+const CONFETTI = [0xff3b6b, 0xff9f1c, 0xffd23f, 0x2ec4b6, 0x4cc9f0, 0x9b5de5, 0xf15bb5, 0x00f5d4];
+
 // ═══════════════ MAP DEFINITIONS ═══════════════
 
 export const MAP_DATA = {
   backrooms: {
     name: 'Backrooms',
     icon: '🏚️',
-    description: 'Endless yellow hallways',
-    bgColor: '#2a2200',
-    fogColor: 0x2a2200,
-    fogDensity: 0.03,
+    description: 'Bright buzzing yellow halls',
+    bgColor: '#c9b24a',
+    fogColor: 0xd8c45a,
+    fogDensity: 0.022,
+    seekFog: 0.07,
     build: buildBackrooms,
   },
   garden: {
     name: 'Garden',
     icon: '🌿',
-    description: 'Lush outdoor greenery',
-    bgColor: '#0a1a0a',
-    fogColor: 0x0a1a0a,
-    fogDensity: 0.012,
+    description: 'Sunny flower-filled lawn',
+    bgColor: '#9fd0ff',
+    fogColor: 0xbfe4ff,
+    fogDensity: 0.008,
+    seekFog: 0.05,
     build: buildGarden,
   },
   office: {
     name: 'Office',
     icon: '🏢',
-    description: 'Corporate workspace',
-    bgColor: '#0a0a14',
-    fogColor: 0x0a0a14,
-    fogDensity: 0.02,
+    description: 'Bright playful workspace',
+    bgColor: '#cdd9f0',
+    fogColor: 0xcdd9f0,
+    fogDensity: 0.014,
+    seekFog: 0.07,
     build: buildOffice,
   },
   gallery: {
     name: 'Gallery',
     icon: '🎨',
-    description: 'Modern art museum',
-    bgColor: '#121215',
-    fogColor: 0x121215,
-    fogDensity: 0.01,
+    description: 'Vibrant art museum',
+    bgColor: '#eceaf2',
+    fogColor: 0xeceaf2,
+    fogDensity: 0.008,
+    seekFog: 0.055,
     build: buildGallery,
   },
   sewer: {
     name: 'Sewer',
     icon: '🧱',
-    description: 'Dark underground tunnels',
-    bgColor: '#050808',
-    fogColor: 0x050808,
-    fogDensity: 0.04,
+    description: 'Neon-lit underground tunnels',
+    bgColor: '#16332a',
+    fogColor: 0x1c4034,
+    fogDensity: 0.03,
+    seekFog: 0.08,
     build: buildSewer,
   },
 };
 
-/** Load a map into the scene. Returns { objects, bounds, seekerSpawn, hiderSpawn } */
+/** Load a map into the scene. Returns { objects, bounds, colliders, seekerSpawn, hiderSpawn } */
 export function loadMap(mapName, scene) {
   const data = MAP_DATA[mapName];
   if (!data) throw new Error(`Unknown map: ${mapName}`);
-  return data.build(scene);
+  const result = data.build(scene);
+  result.colliders = computeColliders(scene, result.objects);
+  return result;
+}
+
+/** Build axis-aligned XZ collider boxes from every solid map object */
+function computeColliders(scene, objects) {
+  scene.updateMatrixWorld(true);
+  const colliders = [];
+  const tmp = new THREE.Box3();
+  objects.forEach(obj => {
+    if (!obj.isMesh || !obj.userData.collide) return;
+    tmp.setFromObject(obj);
+    if (!isFinite(tmp.min.x) || !isFinite(tmp.max.x)) return;
+    colliders.push({
+      minX: tmp.min.x, maxX: tmp.max.x,
+      minZ: tmp.min.z, maxZ: tmp.max.z,
+    });
+  });
+  return colliders;
 }
 
 // ═══════════════ MAP 1: BACKROOMS ═══════════════
@@ -140,13 +183,15 @@ function buildBackrooms(scene) {
   const objects = [];
   const W = 24, D = 24, H = 3.5;
 
-  // Lighting
-  const ambient = new THREE.AmbientLight(0xccaa44, 0.4);
+  // Lighting — much brighter & warmer
+  const ambient = new THREE.AmbientLight(0xfff0c0, 0.85);
   scene.add(ambient);
   objects.push(ambient);
+  const hemi = hemiLight(0xfff4cc, 0x6b5a20, 0.7);
+  scene.add(hemi); objects.push(hemi);
 
   // Floor
-  const floor = plane(W, D, 0x8B7355, 0, 0, 0, { rotX: -Math.PI / 2 });
+  const floor = plane(W, D, 0xb59a6a, 0, 0, 0, { rotX: -Math.PI / 2 });
   scene.add(floor);
   objects.push(floor);
 
@@ -210,6 +255,24 @@ function buildBackrooms(scene) {
   ];
   furniture.forEach(f => { scene.add(f); objects.push(f); });
 
+  // Colourful clutter — paint buckets, rugs, beach balls, traffic cones
+  const clutter = [
+    box(2.5, 0.04, 1.6, 0xff4488, -7, 0.02, 6),   // pink rug
+    box(2.0, 0.04, 1.4, 0x33aaff, 7, 0.02, -3),   // blue rug
+    box(1.6, 0.04, 1.6, 0x44dd66, 2, 0.02, -9),   // green rug
+  ];
+  clutter.forEach(c => { scene.add(c); objects.push(c); });
+
+  // Stacked colourful crates & balls
+  CONFETTI.forEach((col, i) => {
+    const ang = (i / CONFETTI.length) * Math.PI * 2;
+    const cx = Math.cos(ang) * 8, cz = Math.sin(ang) * 8;
+    const crate = box(0.7, 0.7, 0.7, col, cx, 0.35, cz, { roughness: 0.6 });
+    scene.add(crate); objects.push(crate);
+    const ball = orb(0.28, CONFETTI[(i + 3) % CONFETTI.length], cx, 0.95, cz);
+    scene.add(ball); objects.push(ball);
+  });
+
   return {
     objects,
     bounds: { minX: -W/2 + 1, maxX: W/2 - 1, minZ: -D/2 + 1, maxZ: D/2 - 1 },
@@ -224,12 +287,14 @@ function buildGarden(scene) {
   const objects = [];
   const W = 30, D = 30;
 
-  // Sky lighting
-  const ambient = new THREE.AmbientLight(0x88aaff, 0.6);
+  // Sky lighting — bright sunny day
+  const ambient = new THREE.AmbientLight(0xbfe0ff, 0.85);
   scene.add(ambient);
   objects.push(ambient);
+  const hemi = hemiLight(0xafe9ff, 0x3a7d32, 0.9);
+  scene.add(hemi); objects.push(hemi);
 
-  const sun = new THREE.DirectionalLight(0xffffcc, 1.2);
+  const sun = new THREE.DirectionalLight(0xfff6d8, 1.8);
   sun.position.set(10, 20, 10);
   sun.castShadow = true;
   sun.shadow.mapSize.width = 2048;
@@ -342,6 +407,35 @@ function buildGarden(scene) {
   const benchLeg2 = box(0.1, 0.5, 0.1, 0x5a3a1a, -5.2, 0.25, 2);
   scene.add(benchLeg2); objects.push(benchLeg2);
 
+  // Beach balls & garden gnome-ish orbs dotted around the lawn
+  const ballSpots = [[-9, 4], [8, -8], [-4, 9], [11, -2], [2, 11], [-11, -7]];
+  ballSpots.forEach(([bx, bz], i) => {
+    const ball = orb(0.4, CONFETTI[i % CONFETTI.length], bx, 0.4, bz);
+    scene.add(ball); objects.push(ball);
+  });
+
+  // Red & white spotted toadstools
+  const mushSpots = [[-7, 2], [6, 6], [-2, -7], [9, 5]];
+  mushSpots.forEach(([mx, mz]) => {
+    const stem = cylinder(0.1, 0.13, 0.4, 0xfdf3e3, mx, 0.2, mz, { segments: 8 });
+    scene.add(stem); objects.push(stem);
+    const cap = sphere(0.28, 0xe33b3b, mx, 0.45, mz, { roughness: 0.5 });
+    cap.scale.y = 0.6;
+    scene.add(cap); objects.push(cap);
+  });
+
+  // Tulip patch — extra colour bursts
+  const tulipColors = [0xff2d6f, 0xffd23f, 0xff7b00, 0xc14bff, 0xff5ca8];
+  for (let i = 0; i < 30; i++) {
+    const tx = (Math.random() - 0.5) * 24;
+    const tz = (Math.random() - 0.5) * 24;
+    if (Math.abs(tx) < 1.5) continue;
+    const stem = cylinder(0.025, 0.025, 0.4, 0x2f8f3a, tx, 0.2, tz, { segments: 5 });
+    scene.add(stem); objects.push(stem);
+    const bloom = sphere(0.1, tulipColors[i % tulipColors.length], tx, 0.42, tz, { roughness: 0.5 });
+    scene.add(bloom); objects.push(bloom);
+  }
+
   return {
     objects,
     bounds: { minX: -W/2 + 1, maxX: W/2 - 1, minZ: -D/2 + 1, maxZ: D/2 - 1 },
@@ -356,12 +450,14 @@ function buildOffice(scene) {
   const objects = [];
   const W = 22, D = 22, H = 3.2;
 
-  // Lighting
-  const ambient = new THREE.AmbientLight(0x8899bb, 0.5);
+  // Lighting — bright modern office
+  const ambient = new THREE.AmbientLight(0xdce6ff, 0.9);
   scene.add(ambient); objects.push(ambient);
+  const hemi = hemiLight(0xffffff, 0x44506a, 0.7);
+  scene.add(hemi); objects.push(hemi);
 
-  // Floor
-  const floor = plane(W, D, 0x4a5568, 0, 0, 0, { rotX: -Math.PI / 2 });
+  // Floor (warm carpet)
+  const floor = plane(W, D, 0x6a7488, 0, 0, 0, { rotX: -Math.PI / 2 });
   scene.add(floor); objects.push(floor);
 
   // Ceiling
@@ -456,6 +552,26 @@ function buildOffice(scene) {
   const wbFrame = box(3.1, 1.6, 0.03, 0x888888, 0, 1.8, -D/2 + 0.12);
   scene.add(wbFrame); objects.push(wbFrame);
 
+  // Colourful beanbags, exercise balls & wall art to liven it up
+  const fun = [
+    orb(0.45, 0xff6b35, -3, 0.45, 9),
+    orb(0.45, 0x4cc9f0, 9, 0.45, 3),
+    orb(0.45, 0xf15bb5, -9, 0.45, -3),
+  ];
+  fun.forEach(f => { scene.add(f); objects.push(f); });
+
+  // Framed posters on the back wall
+  CONFETTI.slice(0, 5).forEach((col, i) => {
+    const px = -8 + i * 4;
+    const poster = box(1.2, 1.4, 0.04, col, px, 2.0, D/2 - 0.12, {
+      rotY: Math.PI, emissive: col, emissiveIntensity: 0.2, collide: false });
+    scene.add(poster); objects.push(poster);
+  });
+
+  // Water cooler
+  const cooler = box(0.5, 1.3, 0.5, 0xeaf6ff, -10, 0.65, 0, { metalness: 0.1 });
+  scene.add(cooler); objects.push(cooler);
+
   return {
     objects,
     bounds: { minX: -W/2 + 1, maxX: W/2 - 1, minZ: -D/2 + 1, maxZ: D/2 - 1 },
@@ -470,9 +586,11 @@ function buildGallery(scene) {
   const objects = [];
   const W = 26, D = 26, H = 5;
 
-  // Lighting — elegant museum lighting
-  const ambient = new THREE.AmbientLight(0xcccccc, 0.3);
+  // Lighting — bright, airy museum
+  const ambient = new THREE.AmbientLight(0xffffff, 0.7);
   scene.add(ambient); objects.push(ambient);
+  const hemi = hemiLight(0xffffff, 0xd8d0c8, 0.6);
+  scene.add(hemi); objects.push(hemi);
 
   // Floor (marble-like)
   const floor = plane(W, D, 0xe8e0d8, 0, 0, 0, { rotX: -Math.PI / 2, roughness: 0.3, metalness: 0.1 });
@@ -515,8 +633,10 @@ function buildGallery(scene) {
     // Frame
     const frame = box(p.w + 0.15, p.h + 0.15, 0.05, 0x333333, p.x, p.y, p.z, { rotY: p.rotY });
     scene.add(frame); objects.push(frame);
-    // Canvas
-    const painting = box(p.w, p.h, 0.04, paintingColors[i % paintingColors.length], p.x, p.y, p.z, { rotY: p.rotY });
+    // Canvas (glows softly so colour pops)
+    const pc = paintingColors[i % paintingColors.length];
+    const painting = box(p.w, p.h, 0.04, pc, p.x, p.y, p.z, {
+      rotY: p.rotY, emissive: pc, emissiveIntensity: 0.35, collide: false });
     // Offset slightly forward
     const offset = new THREE.Vector3(0, 0, 0.04);
     offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), p.rotY);
@@ -575,12 +695,14 @@ function buildSewer(scene) {
   const objects = [];
   const W = 20, D = 28, H = 3.5;
 
-  // Dark ambient
-  const ambient = new THREE.AmbientLight(0x224422, 0.3);
+  // Ambient — lit but moody (brighter than before)
+  const ambient = new THREE.AmbientLight(0x4a8a6a, 0.6);
   scene.add(ambient); objects.push(ambient);
+  const hemi = hemiLight(0x66ccaa, 0x223322, 0.5);
+  scene.add(hemi); objects.push(hemi);
 
   // Floor
-  const floor = plane(W, D, 0x3a3a2a, 0, 0, 0, { rotX: -Math.PI / 2 });
+  const floor = plane(W, D, 0x4a4a38, 0, 0, 0, { rotX: -Math.PI / 2 });
   scene.add(floor); objects.push(floor);
 
   // Ceiling (brick)
@@ -648,10 +770,18 @@ function buildSewer(scene) {
     scene.add(grate); objects.push(grate);
   }
 
-  // Dim point lights (green tint)
+  // Coloured glow lamps along the tunnel (brighter, more vivid)
+  const lampCols = [0x44ff99, 0x44aaff, 0xffaa33, 0xff5577, 0x88ff44];
+  let li = 0;
   for (let z = -10; z <= 10; z += 5) {
-    const pl = pointLight(0x44aa66, 0.8, 0, H - 0.5, z, 8);
+    const col = lampCols[li % lampCols.length];
+    const pl = pointLight(col, 1.6, 0, H - 0.5, z, 10);
     scene.add(pl); objects.push(pl);
+    // glowing lamp housing so the source is visible
+    const lamp = box(0.4, 0.15, 0.4, col, 0, H - 0.25, z, {
+      emissive: col, emissiveIntensity: 2, collide: false });
+    scene.add(lamp); objects.push(lamp);
+    li++;
   }
 
   // Barrels / crates
